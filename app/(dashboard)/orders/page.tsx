@@ -22,12 +22,12 @@ export default function OrdersListPage() {
   const [search, setSearch] = useState("")
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'order_number', direction: 'desc' })
 
-  const { hasPermission } = useAuth() 
+  const { hasPermission } = useAuth()
   const supabase = createClient()
 
   useEffect(() => {
     fetchOrders();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
   async function fetchOrders() {
@@ -39,14 +39,14 @@ export default function OrdersListPage() {
       order_items ( quantity_ordered ),
       dispatch_notes ( dispatch_items ( quantity_dispatched ) )
     `).order('order_number', { ascending: false });
-    
+
     if (data) setOrders(data as unknown as Order[]);
     setIsLoading(false);
   }
 
   const handleDelete = async (id: string, orderNumber: string) => {
     if (!window.confirm(`Are you absolutely sure you want to delete order ${orderNumber}? This will also delete all associated items and payments.`)) return;
-    
+
     const { error } = await supabase.from('orders').delete().eq('id', id);
     if (error) {
       alert("Failed to delete order: " + error.message);
@@ -66,15 +66,15 @@ export default function OrdersListPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'pending': 
+      case 'pending':
         return <span className="px-2.5 py-1 bg-red-100 text-red-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-red-200 shadow-sm">Pending</span>;
-      case 'partial': 
+      case 'partial':
         return <span className="px-2.5 py-1 bg-yellow-100 text-yellow-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-yellow-300 shadow-sm">Partial</span>;
-      case 'on credit': 
+      case 'on credit':
         return <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-blue-300 shadow-sm">On Credit</span>;
-      case 'completed': 
+      case 'completed':
         return <span className="px-2.5 py-1 bg-green-100 text-green-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-green-200 shadow-sm">Completed</span>;
-      default: 
+      default:
         return <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-slate-200 shadow-sm">{status}</span>;
     }
   }
@@ -98,11 +98,11 @@ export default function OrdersListPage() {
 
     if (percent === 0) {
       return <span className="whitespace-nowrap px-2.5 py-1 bg-red-100 text-red-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-red-200 shadow-sm">0%</span>;
-    } 
+    }
     if (percent >= 100) {
       return <span className="whitespace-nowrap px-2.5 py-1 bg-green-100 text-green-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-green-200 shadow-sm">100%</span>;
     }
-    
+
     return (
       <span className="whitespace-nowrap px-2.5 py-1 bg-yellow-100 text-yellow-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-yellow-300 shadow-sm flex flex-col items-center leading-tight">
         <span>{percent}%</span>
@@ -113,18 +113,18 @@ export default function OrdersListPage() {
 
   const getPaymentBadge = (totalAmount: number, payments: { amount: number }[]) => {
     const totalPaid = payments?.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) || 0;
-    
+
     let percent = 0;
     if (totalAmount > 0) percent = Math.round((totalPaid / totalAmount) * 100);
     else if (totalPaid > 0) percent = 100;
-    
+
     if (percent === 0) {
       return <span className="whitespace-nowrap px-2.5 py-1 bg-red-100 text-red-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-red-200 shadow-sm">0% Paid</span>;
-    } 
+    }
     if (percent >= 100) {
       return <span className="whitespace-nowrap px-2.5 py-1 bg-green-100 text-green-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-green-200 shadow-sm">100% Paid</span>;
     }
-    
+
     return (
       <span className="whitespace-nowrap px-2.5 py-1 bg-yellow-100 text-yellow-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-yellow-300 shadow-sm flex flex-col items-center leading-tight">
         <span>{percent}% Paid</span>
@@ -133,8 +133,8 @@ export default function OrdersListPage() {
     );
   }
 
-  let filteredOrders = orders.filter(o => 
-    o.order_number.toLowerCase().includes(search.toLowerCase()) || 
+  let filteredOrders = orders.filter(o =>
+    o.order_number.toLowerCase().includes(search.toLowerCase()) ||
     o.customers?.name.toLowerCase().includes(search.toLowerCase()) ||
     o.customers?.mobile.includes(search)
   );
@@ -171,7 +171,7 @@ export default function OrdersListPage() {
 
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-6 pb-20">
-      
+
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-xl shadow-sm border border-slate-200">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Master Orders List</h2>
@@ -216,28 +216,30 @@ export default function OrdersListPage() {
                     <td className="px-6 py-4">
                       <div className="font-bold text-slate-800 text-sm">{order.customers?.name || 'Unknown'}</div>
                       <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
-                        <span className="flex items-center gap-1 font-mono"><Phone className="w-3 h-3 text-slate-400"/> {order.customers?.mobile}</span>
-                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-slate-400"/> {order.customers?.city || 'No City'}</span>
+                        <span className="flex items-center gap-1 font-mono"><Phone className="w-3 h-3 text-slate-400" /> {order.customers?.mobile}</span>
+                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-slate-400" /> {order.customers?.city || 'No City'}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-center">{getStatusBadge(order.status)}</td>
                     <td className="px-6 py-4 text-center">{getDeliveryBadge(order)}</td>
                     <td className="px-6 py-4 text-center">{getPaymentBadge(order.total_amount, order.payments)}</td>
                     <td className="px-6 py-4 text-right font-black text-slate-800 text-base">₹{order.total_amount.toLocaleString()}</td>
-                    
+
                     <td className="px-6 py-4 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <Link href={`/orders/${order.id}`} className="p-2 bg-white border border-slate-300 text-slate-600 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 rounded shadow-sm transition-all" title="View Order">
-                          <ExternalLink className="w-4 h-4"/>
+                          <ExternalLink className="w-4 h-4" />
                         </Link>
                         {hasPermission('edit_orders') && (
-                        <Link href={`/orders/${order.id}/edit`} className="p-2 bg-white border border-slate-300 text-slate-600 hover:text-green-600 hover:border-green-300 hover:bg-green-50 rounded shadow-sm transition-all" title="Edit Order">
-                          <Edit2 className="w-4 h-4"/>
-                        </Link>
+                          <Link href={`/orders/${order.id}/edit`} className="p-2 bg-white border border-slate-300 text-slate-600 hover:text-green-600 hover:border-green-300 hover:bg-green-50 rounded shadow-sm transition-all" title="Edit Order">
+                            <Edit2 className="w-4 h-4" />
+                          </Link>
                         )}
-                        <button onClick={() => handleDelete(order.id, order.order_number)} className="p-2 bg-white border border-slate-300 text-slate-600 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded shadow-sm transition-all" title="Delete Order">
-                          <Trash2 className="w-4 h-4"/>
-                        </button>
+                        {hasPermission('delete_orders') && (
+                          <button onClick={() => handleDelete(order.id, order.order_number)} className="p-2 bg-white border border-slate-300 text-slate-600 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded shadow-sm transition-all" title="Delete Order">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

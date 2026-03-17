@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Plus, Trash2, Save, User, MapPin, Receipt, Truck, CreditCard, Search, Image as ImageIcon, X, Layers, Minus, Calendar, Hash, Star } from "lucide-react"
+import { usePermissions } from "@/hooks/usePermissions"   // ← replaces useAuth
 
 const INDIAN_STATES = [
   "Maharashtra", "Andhra Pradesh", "Karnataka", "Tamil Nadu", "Telangana", "Kerala",
@@ -15,8 +16,9 @@ export default function NewOrderPage() {
   const router = useRouter()
   const supabase = createClient()
 
+  const { isCategoryAllowed } = usePermissions()   // ← replaces hasPermission
+
   // --- CORE STATE ---
-  const [orderNo, setOrderNo] = useState("Loading...")
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0])
 
   // CUSTOMER STATE
@@ -38,29 +40,7 @@ export default function NewOrderPage() {
   const [catalogSearch, setCatalogSearch] = useState("")
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false)
 
-  // 1. Fetch Next Order Number
-  // 1. Fetch Next Order Number (FIXED: Sorting by order_number instead of created_at)
-  useEffect(() => {
-    async function fetchNextOrderNo() {
-      const { data } = await supabase
-        .from('orders')
-        .select('order_number')
-        .order('order_number', { ascending: false }) // This guarantees we get the absolute highest ORD- number
-        .limit(1)
-        .maybeSingle();
-
-      if (data && data.order_number) {
-        const match = data.order_number.match(/\d+$/);
-        if (match) setOrderNo(`ORD-${String(parseInt(match[0]) + 1).padStart(4, '0')}`);
-        else setOrderNo(`ORD-${Date.now().toString().slice(-4)}`);
-      } else {
-        setOrderNo("ORD-0001");
-      }
-    }
-    fetchNextOrderNo();
-  }, [supabase]);
-
-  // 2. VIP/FAVORITE CUSTOMER AUTOCOMPLETE ONLY
+  // VIP/FAVORITE CUSTOMER AUTOCOMPLETE
   useEffect(() => {
     const searchTerms = customerInfo.mobile.length >= 3 ? customerInfo.mobile : (customerInfo.name.length >= 3 ? customerInfo.name : "");
     if (!searchTerms) {
@@ -71,7 +51,7 @@ export default function NewOrderPage() {
       const { data } = await supabase
         .from('customers')
         .select('*')
-        .eq('is_favorite', true) // STRICT FIX: Only fetch favorites
+        .eq('is_favorite', true)
         .or(`mobile.ilike.%${searchTerms}%,name.ilike.%${searchTerms}%`)
         .limit(5);
       if (data) setCustomerSuggestions(data);
@@ -90,10 +70,20 @@ export default function NewOrderPage() {
   // --- CATALOG LOGIC ---
   const openCatalog = async () => {
     setIsCatalogOpen(true);
-    if (catalogItems.length > 0) return;
     setIsLoadingCatalog(true);
-    const { data: itemsData } = await supabase.from('items').select(`id, name, sku, price, gst_rate, image_path, pack_size, sub_categories(name), sub_sub_categories(name), stock(quantity, locations(name))`);
-    const { data: orderData } = await supabase.from('order_items').select(`item_id, quantity_ordered, orders!inner(status), dispatch_items(quantity_dispatched)`).neq('orders.status', 'Completed');
+
+    const { data: itemsData } = await supabase.from('items').select(`
+      id, name, sku, price, gst_rate, image_path, pack_size,
+      sub_categories(name, categories(name)),
+      sub_sub_categories(name),
+      stock(quantity, locations(name))
+    `);
+
+    const { data: orderData } = await supabase
+      .from('order_items')
+      .select(`item_id, quantity_ordered, orders!inner(status), dispatch_items(quantity_dispatched)`)
+      .neq('orders.status', 'Completed');
+
     const pendingMap: Record<string, number> = {};
     if (orderData) {
       orderData.forEach((row: any) => {
@@ -103,17 +93,33 @@ export default function NewOrderPage() {
       });
     }
     setPendingQtys(pendingMap);
-    if (itemsData) setCatalogItems(itemsData);
+
+    if (itemsData) {
+      // isCategoryAllowed reads from usePermissions which is already loaded in
+      // memory from AuthContext — no extra API call, instant filter.
+      const permitted = itemsData.filter((item: any) =>
+        isCategoryAllowed(item.sub_categories?.categories?.name)
+      );
+      setCatalogItems(permitted);
+    }
+
     setIsLoadingCatalog(false);
   }
 
-  const filteredCatalog = catalogItems.filter(item => `${item.sub_categories?.name} ${item.sub_sub_categories?.name} ${item.name} ${item.sku}`.toLowerCase().includes(catalogSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  const filteredCatalog = catalogItems
+    .filter(item => `${item.sub_categories?.name} ${item.sub_sub_categories?.name} ${item.name} ${item.sku}`
+      .toLowerCase().includes(catalogSearch.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   const handleCatalogAdd = (item: any) => {
     const packSize = item.pack_size || 10;
     const existing = orderItems.find(i => i.item_id === item.id);
     if (existing) updateItem(item.id, 'qty', existing.qty + packSize);
-    else setOrderItems([...orderItems, { item_id: item.id, name: item.name, sku: item.sku, price: item.price, qty: packSize, gst_rate: item.gst_rate || 0, pack_size: packSize, path: `${item.sub_categories?.name || ''} › ${item.sub_sub_categories?.name || 'Standard'}` }]);
+    else setOrderItems([...orderItems, {
+      item_id: item.id, image_path: item.image_path || null, name: item.name, sku: item.sku, price: item.price,
+      qty: packSize, gst_rate: item.gst_rate || 0, pack_size: packSize,
+      path: `${item.sub_categories?.name || ''} › ${item.sub_sub_categories?.name || 'Standard'}`
+    }]);
   }
 
   const handleCatalogRemove = (item: any) => {
@@ -124,7 +130,8 @@ export default function NewOrderPage() {
     else updateItem(item.id, 'qty', existing.qty - packSize);
   }
 
-  const updateItem = (id: string, field: string, value: number) => setOrderItems(orderItems.map(i => i.item_id === id ? { ...i, [field]: value } : i))
+  const updateItem = (id: string, field: string, value: number) =>
+    setOrderItems(orderItems.map(i => i.item_id === id ? { ...i, [field]: value } : i))
   const removeItem = (id: string) => setOrderItems(orderItems.filter(i => i.item_id !== id))
 
   const addPaymentRow = () => setPaymentRecords([...paymentRecords, defaultPayment()]);
@@ -171,52 +178,62 @@ export default function NewOrderPage() {
   const handleSaveOrder = async () => {
     if (!customerInfo.name || !customerInfo.mobile) return alert("Customer Name and Mobile are required.")
     if (orderItems.length === 0) return alert("Add at least one item to the order.")
-    if (!orderNo) return alert("Order Number is required.")
     setIsSaving(true)
 
     let customerId = null
     const { data: existingCustomer } = await supabase.from('customers').select('id').eq('mobile', customerInfo.mobile).maybeSingle()
-    if (existingCustomer) {
-      customerId = existingCustomer.id
-      await supabase.from('customers').update({
-        name: customerInfo.name, city: customerInfo.city, billing_address: customerInfo.address,
-        state: customerInfo.state, gst_number: customerInfo.gst, is_favorite: customerInfo.is_favorite
-      }).eq('id', customerId)
-    } else {
-      const { data: newCustomer } = await supabase.from('customers').insert([{
-        name: customerInfo.name, mobile: customerInfo.mobile, city: customerInfo.city,
-        billing_address: customerInfo.address, state: customerInfo.state, gst_number: customerInfo.gst, is_favorite: customerInfo.is_favorite
-      }]).select().single()
-      customerId = newCustomer?.id
+    if (existingCustomer) customerId = existingCustomer.id;
+
+    if (customerId) {
+      await supabase.from('customers').update({ is_favorite: customerInfo.is_favorite }).eq('id', customerId);
     }
 
-    const { data: newOrder, error: orderError } = await supabase.from('orders').insert([{
-      order_number: orderNo, created_at: new Date(orderDate).toISOString(), customer_id: customerId,
-      status: 'Pending', total_amount: roundedTotal, discount_value: discountInput,
-      transport_mode: deliveryInfo.mode, transporter_name: deliveryInfo.mode === 'Transporter' ? deliveryInfo.transporter : null
-    }]).select().single()
+    const { data: newOrderId, error: rpcError } = await supabase.rpc('create_order_atomic', {
+      payload: {
+        customer_id: customerId,
+        customer: {
+          name: customerInfo.name,
+          mobile: customerInfo.mobile,
+          billing_address: customerInfo.address,
+          city: customerInfo.city,
+          state: customerInfo.state,
+          gst_number: customerInfo.gst
+        },
+        order: {
+          order_date: orderDate,
+          transport_mode: deliveryInfo.mode,
+          transporter_name: deliveryInfo.mode === 'Transporter' ? deliveryInfo.transporter : null,
+          discount_value: discountInput,
+          total_amount: roundedTotal
+        },
+        items: orderItems.map(item => ({
+          id: item.item_id,
+          quantity: item.qty,
+          price: item.price
+        }))
+      }
+    });
 
-    if (orderError) { alert("Error saving order: " + orderError.message); setIsSaving(false); return; }
-
-    const itemsPayload = orderItems.map(item => ({ order_id: newOrder.id, item_id: item.item_id, quantity_ordered: item.qty, unit_price: item.price }))
-    await supabase.from('order_items').insert(itemsPayload)
+    if (rpcError) {
+      alert("Checkout Failed: " + rpcError.message);
+      setIsSaving(false);
+      return;
+    }
 
     const validPayments = paymentRecords.filter(p => p.amount && Number(p.amount) > 0);
     if (validPayments.length > 0) {
       const paymentsPayload = validPayments.map(p => ({
-        order_id: newOrder.id, amount: Number(p.amount), payment_mode: p.mode, transaction_reference: p.reference, created_at: new Date(p.date).toISOString()
+        order_id: newOrderId,
+        amount: Number(p.amount),
+        payment_mode: p.mode,
+        transaction_reference: p.reference,
+        created_at: new Date(p.date).toISOString()
       }));
-      
-      const { error: paymentError } = await supabase.from('payments').insert(paymentsPayload);
-      
-      if (paymentError) {
-        alert("Order saved, but payment failed to record: " + paymentError.message);
-        console.error("Payment Error Details:", paymentError);
-      }
+      await supabase.from('payments').insert(paymentsPayload);
     }
 
     alert("Order Created Successfully!")
-    router.push(`/orders/${newOrder.id}`)
+    router.push(`/orders/${newOrderId}`)
   }
 
   return (
@@ -227,7 +244,12 @@ export default function NewOrderPage() {
         <div className="flex items-center gap-6">
           <div><h2 className="text-2xl font-bold text-slate-800">Create New Order</h2><p className="text-sm text-slate-500">Record a new sale, process split payments, and allocate stock.</p></div>
           <div className="hidden md:flex gap-4 border-l border-slate-200 pl-6 ml-2">
-            <div><label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1"><Hash className="w-3 h-3" /> Order No</label><input type="text" value={orderNo} onChange={e => setOrderNo(e.target.value)} className="w-28 p-1.5 mt-1 border border-slate-300 rounded outline-none focus:border-blue-500 font-bold text-slate-800 text-sm" /></div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1"><Hash className="w-3 h-3" /> Order No</label>
+              <div className="w-36 p-1.5 mt-1 border border-slate-200 bg-slate-50 rounded font-bold text-slate-400 text-sm text-center">
+                Auto-generated
+              </div>
+            </div>
             <div><label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1"><Calendar className="w-3 h-3" /> Date</label><input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} className="w-36 p-1.5 mt-1 border border-slate-300 rounded outline-none focus:border-blue-500 text-sm font-medium text-slate-700" /></div>
           </div>
         </div>
@@ -258,7 +280,6 @@ export default function NewOrderPage() {
                 <label className="text-xs font-bold text-slate-500 uppercase">Mobile Number *</label>
                 <input type="text" value={customerInfo.mobile} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} onChange={e => setCustomerInfo({ ...customerInfo, mobile: e.target.value })} className="w-full p-2.5 mt-1 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Type to search or add new..." />
               </div>
-
 
               {/* VIP AUTOCOMPLETE DROPDOWN */}
               {showSuggestions && customerSuggestions.length > 0 && (
@@ -322,7 +343,22 @@ export default function NewOrderPage() {
                 <tbody className="divide-y divide-slate-100">
                   {orderItems.map((item) => (
                     <tr key={item.item_id}>
-                      <td className="py-3 px-4"><div className="font-bold text-slate-800">{item.name}</div><div className="text-[10px] text-blue-600 font-semibold uppercase">{item.path}</div></td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 bg-slate-100 rounded-md border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                            {item.image_path ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={item.image_path} alt={item.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <ImageIcon className="w-5 h-5 text-slate-300" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-800">{item.name}</div>
+                            <div className="text-[10px] text-blue-600 font-semibold uppercase">{item.path}</div>
+                          </div>
+                        </div>
+                      </td>
                       <td className="py-3 px-4"><input type="number" value={item.price} onChange={e => updateItem(item.item_id, 'price', Number(e.target.value))} className="w-full p-1.5 border border-slate-300 rounded outline-none focus:border-blue-500" /></td>
                       <td className="py-3 px-4"><input type="number" min="1" value={item.qty} onChange={e => updateItem(item.item_id, 'qty', Number(e.target.value))} className="w-full p-1.5 border border-slate-300 rounded outline-none focus:border-blue-500 text-center font-bold" /></td>
                       <td className="py-3 px-4 text-center text-slate-500 font-medium">{item.gst_rate}%</td>

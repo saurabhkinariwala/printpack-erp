@@ -1,15 +1,21 @@
 "use client"
 
-import { useState, useEffect, use } from "react"
+import { useState, useEffect, use, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { ArrowLeft, Save, Loader2, User, Truck, Layers, Receipt, Plus, Trash2, History, Search, X, CreditCard, CheckCircle } from "lucide-react"
+import { ArrowLeft, Save, Loader2, User, Truck, Layers, Receipt, Plus, Trash2, History, Search, X, CreditCard, CheckCircle, ImageIcon, Minus } from "lucide-react"
+import { usePermissions } from "@/hooks/usePermissions"
 
 export default function EditOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params)
   const orderId = resolvedParams.id
   const router = useRouter()
   const supabase = createClient()
+
+  const { isCategoryAllowed } = usePermissions()
+
+  // ⚡ THE FIX: This lock prevents React from constantly overwriting your cart
+  const hasLoadedData = useRef(false)
 
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -26,18 +32,36 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
   const [catalog, setCatalog] = useState<any[]>([])
   const [isCatalogOpen, setIsCatalogOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [pendingQtys, setPendingQtys] = useState<Record<string, number>>({})
 
   useEffect(() => {
-    async function loadData() {
-      const { data: itemsData } = await supabase.from('items').select(`
-        id, name, sku, gst_rate, base_price, sub_categories(name)
-      `);
-      if (itemsData) setCatalog(itemsData);
+    // If we have already loaded the data from the DB, abort immediately so we don't overwrite user edits!
+    if (hasLoadedData.current) return;
 
+    async function loadData() {
+      // Lock the gate so this only runs once
+      hasLoadedData.current = true;
+
+      // 1. Fetch Full Catalog
+      const { data: itemsData } = await supabase.from('items').select(`
+        id, name, sku, price, gst_rate, image_path, pack_size,
+        sub_categories(name, categories(name)),
+        sub_sub_categories(name),
+        stock(quantity, locations(name))
+      `);
+
+      if (itemsData) {
+        const permitted = itemsData.filter((item: any) =>
+          isCategoryAllowed(item.sub_categories?.categories?.name)
+        );
+        setCatalog(permitted);
+      }
+
+      // 2. Fetch Order Data
       const { data: orderData, error } = await supabase.from('orders').select(`
         *,
         customers ( id, name, mobile, billing_address, city, state, gst_number ),
-        order_items ( id, item_id, quantity_ordered, unit_price, items ( name, sku, gst_rate ) ),
+        order_items ( id, item_id, quantity_ordered, unit_price, items ( name, sku, image_path, gst_rate, sub_categories(name), sub_sub_categories(name) ) ),
         payments (*)
       `).eq('id', orderId).single();
 
@@ -53,27 +77,56 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
       setTransporterName(orderData.transporter_name || "");
       setDiscount(orderData.discount_value || "0");
 
+      // 3. Build Cart Safely
       const existingCart = orderData.order_items.map((oi: any) => ({
-        id: oi.item_id, name: oi.items?.name || 'Unknown', sku: oi.items?.sku || '', gst_rate: oi.items?.gst_rate || 0, price: oi.unit_price, quantity: oi.quantity_ordered
+        id: oi.item_id, 
+        name: oi.items?.name || 'Unknown', 
+        sku: oi.items?.sku || '', 
+        gst_rate: oi.items?.gst_rate || 0, 
+        price: oi.unit_price, 
+        quantity: oi.quantity_ordered,
+        image_path: oi.items?.image_path || null,
+        path: `${oi.items?.sub_categories?.name || ''} › ${oi.items?.sub_sub_categories?.name || 'Standard'}`
       }));
       setCart(existingCart);
       setIsLoading(false);
     }
     loadData();
-  }, [supabase, orderId]);
+  }, [supabase, orderId, isCategoryAllowed]);
 
   const handleQuantityChange = (id: string, qty: number) => { setCart(cart.map(item => item.id === id ? { ...item, quantity: Math.max(1, qty) } : item)); };
   const handlePriceChange = (id: string, price: number) => { setCart(cart.map(item => item.id === id ? { ...item, price: Math.max(0, price) } : item)); };
   const removeItem = (id: string) => { setCart(cart.filter(item => item.id !== id)); };
 
   const handleAddItemToCart = (selectedItem: any) => {
-    if (cart.find(i => i.id === selectedItem.id)) {
-      alert("Item is already in the order. You can increase its quantity in the table.");
+    const packSize = selectedItem.pack_size || 10;
+    const existing = cart.find(i => i.id === selectedItem.id);
+    
+    if (existing) {
+      handleQuantityChange(selectedItem.id, existing.quantity + packSize);
     } else {
-      setCart([...cart, { id: selectedItem.id, name: selectedItem.name, sku: selectedItem.sku, gst_rate: selectedItem.gst_rate, price: selectedItem.base_price || 0, quantity: 1 }]);
+      setCart([...cart, { 
+        id: selectedItem.id, 
+        name: selectedItem.name, 
+        sku: selectedItem.sku, 
+        gst_rate: selectedItem.gst_rate, 
+        price: selectedItem.price || 0, 
+        quantity: packSize,
+        image_path: selectedItem.image_path || null,
+        path: `${selectedItem.sub_categories?.name || ''} › ${selectedItem.sub_sub_categories?.name || 'Standard'}`
+      }]);
     }
   };
 
+  const handleCatalogRemove = (selectedItem: any) => {
+    const packSize = selectedItem.pack_size || 10;
+    const existing = cart.find(i => i.id === selectedItem.id);
+    if (!existing) return;
+    if (existing.quantity <= packSize) removeItem(selectedItem.id);
+    else handleQuantityChange(selectedItem.id, existing.quantity - packSize);
+  }
+
+  // --- FINANCIAL MATH ENGINE ---
   let subtotal = 0;
   cart.forEach(item => subtotal += (item.price * item.quantity));
   let discountAmt = 0;
@@ -161,9 +214,12 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
     }
   };
 
-  const filteredCatalog = catalog.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.sku.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredCatalog = catalog.filter(item => {
+    const searchString = `${item.sub_categories?.name || ''} ${item.sub_sub_categories?.name || ''} ${item.name || ''} ${item.sku || ''}`.toLowerCase();
+    return searchString.includes(searchTerm.toLowerCase());
+  }).sort((a, b) => a.name.localeCompare(b.name));
 
-  if (isLoading) return <div className="p-20 text-center font-bold text-slate-500">Loading Order Sandbox...</div>;
+  if (isLoading) return <div className="p-20 text-center font-bold text-slate-500 flex justify-center items-center gap-2"><Loader2 className="w-5 h-5 animate-spin"/> Loading Order Sandbox...</div>;
 
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-6 pb-20">
@@ -178,7 +234,7 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
       <div className="flex items-center justify-between bg-white p-5 rounded-xl shadow-sm border border-slate-200">
         <div className="flex items-center gap-4">
           <button onClick={() => router.back()} className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 hover:text-blue-600"><ArrowLeft className="w-5 h-5"/></button>
-          <div><h1 className="text-xl font-bold text-slate-800">Edit Order: {originalOrder.order_number}</h1><p className="text-xs text-slate-500 font-medium mt-1">Make changes to customer, delivery, or items below.</p></div>
+          <div><h1 className="text-xl font-bold text-slate-800">Edit Order: {originalOrder?.order_number}</h1><p className="text-xs text-slate-500 font-medium mt-1">Make changes to customer, delivery, or items below.</p></div>
         </div>
         <button onClick={handleUpdateOrder} disabled={isSaving} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg shadow font-bold flex items-center gap-2 disabled:opacity-50 transition-all">
           {isSaving ? <Loader2 className="w-5 h-5 animate-spin"/> : <Save className="w-5 h-5"/>} Save New Version
@@ -228,14 +284,30 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="bg-white border-b border-slate-200 text-[10px] uppercase text-slate-500 font-bold tracking-wider">
-                  <tr><th className="p-4">Product</th><th className="p-4 w-32 text-center">Price (₹)</th><th className="p-4 w-32 text-center">Qty</th><th className="p-4 w-32 text-right">Total</th><th className="p-4 w-12 text-center"></th></tr>
+                  <tr><th className="p-4">Product Details</th><th className="p-4 w-28 text-center">Price (₹)</th><th className="p-4 w-28 text-center">Qty</th><th className="p-4 w-28 text-right">Total</th><th className="p-4 w-12 text-center"></th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {cart.map(item => (
-                    <tr key={item.id} className="hover:bg-slate-50">
-                      <td className="p-4"><p className="font-bold text-slate-800">{item.name}</p><p className="text-[10px] font-mono text-slate-400 mt-1">{item.sku} • {item.gst_rate}% GST</p></td>
-                      <td className="p-4 text-center"><input type="number" value={item.price} onChange={(e) => handlePriceChange(item.id, Number(e.target.value))} className="w-24 p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-center font-mono text-sm" /></td>
-                      <td className="p-4 text-center"><input type="number" min="1" value={item.quantity} onChange={(e) => handleQuantityChange(item.id, Number(e.target.value))} className="w-20 p-2 border border-blue-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-center font-bold text-sm bg-blue-50 text-blue-900" /></td>
+                  {cart.map((item, idx) => (
+                    // ⚡ THE FIX: Safe combination key prevents duplicate crashing!
+                    <tr key={`cart-${item.id}-${idx}`} className="hover:bg-slate-50">
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 bg-slate-100 rounded-md border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                            {item.image_path ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={item.image_path} alt={item.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <ImageIcon className="w-5 h-5 text-slate-300" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800">{item.name}</p>
+                            <p className="text-[10px] font-mono text-slate-400 mt-1">{item.sku} • {item.gst_rate}% GST</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4 text-center"><input type="number" value={item.price} onChange={(e) => handlePriceChange(item.id, Number(e.target.value))} className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-center font-mono text-sm" /></td>
+                      <td className="p-4 text-center"><input type="number" min="1" value={item.quantity} onChange={(e) => handleQuantityChange(item.id, Number(e.target.value))} className="w-full p-2 border border-blue-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-center font-bold text-sm bg-blue-50 text-blue-900" /></td>
                       <td className="p-4 text-right font-black text-slate-800">₹{(item.price * item.quantity).toLocaleString()}</td>
                       <td className="p-4 text-center"><button onClick={() => removeItem(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button></td>
                     </tr>
@@ -296,28 +368,51 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
       </div>
 
       {isCatalogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-            <div className="p-5 border-b border-slate-100 bg-slate-50 shrink-0">
-              <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Layers className="w-5 h-5 text-blue-600" /> Product Catalog</h2><button onClick={() => setIsCatalogOpen(false)} className="p-2 text-slate-400 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5"/></button></div>
-              <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" autoFocus placeholder="Search by product name or SKU..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all font-medium" /></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8">
+          <div className="bg-slate-50 w-full max-w-7xl h-full rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="bg-white p-5 border-b border-slate-200 flex justify-between items-center shrink-0">
+              <div><h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Search className="w-6 h-6 text-blue-600" /> Edit Order Catalog</h2></div>
+              <button onClick={() => setIsCatalogOpen(false)} className="p-2 bg-slate-100 hover:bg-red-100 text-slate-500 hover:text-red-600 rounded-full transition-colors"><X className="w-6 h-6" /></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 bg-slate-50/50">
-              {filteredCatalog.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
-                  {filteredCatalog.map(item => {
-                    const isInCart = cart.some(cartItem => cartItem.id === item.id);
-                    return (
-                      <div key={item.id} className={`bg-white border p-4 rounded-xl shadow-sm flex flex-col justify-between transition-all ${isInCart ? 'border-green-400 bg-green-50/30' : 'border-slate-200 hover:border-blue-300 hover:shadow-md'}`}>
-                        <div><p className="font-bold text-slate-800 leading-tight">{item.name}</p><div className="flex justify-between items-center mt-2"><span className="text-[10px] font-mono bg-slate-100 text-slate-500 px-2 py-0.5 rounded">{item.sku}</span><span className="text-xs font-semibold text-slate-500">{item.sub_categories?.name || 'Standard'}</span></div></div>
-                        <div className="mt-4 flex items-center justify-between pt-4 border-t border-slate-100"><span className="font-black text-slate-800">₹{(item.base_price || 0).toLocaleString()}</span><button onClick={() => handleAddItemToCart(item)} disabled={isInCart} className={`p-2 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${isInCart ? 'bg-green-100 text-green-700 cursor-default' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>{isInCart ? "Added" : <><Plus className="w-4 h-4"/> Add</>}</button></div>
+            <div className="bg-white p-4 border-b border-slate-200 shrink-0"><input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search to add or replace products..." className="w-full p-3 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-500 text-lg font-medium shadow-sm" autoFocus /></div>
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+                {filteredCatalog.map((item, idx) => {
+                  let totalAct = 0; let remainingPending = pendingQtys[item.id] || 0; let totalAvl = 0;
+                  item.stock?.forEach((s: any) => { totalAct += s.quantity; const locDeduction = Math.min(s.quantity, remainingPending); remainingPending -= locDeduction; totalAvl += (s.quantity - locDeduction); });
+                  const cartItem = cart.find(i => i.id === item.id);
+                  const packSize = item.pack_size || 10;
+                  return (
+                    <div key={`catalog-${item.id}-${idx}`} className={`bg-white border-2 rounded-xl overflow-hidden flex flex-col transition-all ${cartItem ? 'border-blue-500 shadow-md ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <div className="h-40 w-full bg-slate-100 relative">
+                        {item.image_path ? ( /* eslint-disable-next-line @next/next/no-img-element */ <img src={item.image_path} alt={item.name} className="h-full w-full object-cover" />) : <div className="h-full w-full flex items-center justify-center"><ImageIcon className="w-10 h-10 text-slate-300" /></div>}
+                        <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded">Pack of {packSize}</div>
                       </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center"><Search className="w-12 h-12 text-slate-200 mb-3" /><p className="font-bold text-lg text-slate-500">No products found</p></div>
-              )}
+                      <div className="p-4 flex-1 flex flex-col">
+                        <p className="text-[10px] font-bold text-blue-600 uppercase mb-1 leading-tight">{item.sub_categories?.name || 'Uncategorized'} › {item.sub_sub_categories?.name || 'Standard'}</p>
+                        <div className="flex justify-between items-start gap-2 mb-1"><h4 className="font-bold text-slate-800 leading-tight">{item.name}</h4><span className="font-black text-slate-800">₹{item.price}</span></div>
+                        <p className="text-xs text-slate-400 font-mono mb-3">{item.sku}</p>
+                        <div className="flex gap-3 text-xs font-mono mt-auto"><span className="text-slate-500">ACT:{totalAct}</span><span className={`font-bold ${totalAvl > 0 ? 'text-green-600' : 'text-red-500'}`}>AVL:{totalAvl}</span></div>
+                      </div>
+                      <div className="p-3 bg-slate-50 border-t border-slate-100">
+                        {cartItem ? (
+                          <div className="flex items-center justify-between bg-blue-50 rounded-lg p-1 border border-blue-200">
+                            <button onClick={() => handleCatalogRemove(item)} className="p-2 bg-white rounded shadow-sm text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"><Minus className="w-4 h-4" /></button>
+                            <div className="flex flex-col items-center"><span className="font-black text-blue-800">{cartItem.quantity} <span className="text-xs font-semibold">Qty</span></span></div>
+                            <button onClick={() => handleAddItemToCart(item)} className="p-2 bg-white rounded shadow-sm text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"><Plus className="w-4 h-4" /></button>
+                          </div>
+                        ) : (
+                          <button onClick={() => handleAddItemToCart(item)} className="w-full py-2 bg-white border border-slate-300 hover:border-blue-500 hover:bg-blue-50 text-slate-700 font-bold rounded-lg transition-colors flex items-center justify-center gap-2"><Plus className="w-4 h-4" /> Add to Order</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="bg-white p-4 border-t border-slate-200 flex justify-between items-center shrink-0">
+              <span className="text-sm font-bold text-slate-500">{filteredCatalog.length} Products Found</span>
+              <button onClick={() => setIsCatalogOpen(false)} className="bg-slate-800 text-white px-8 py-3 rounded-xl font-bold shadow hover:bg-slate-900">Done Selecting Items</button>
             </div>
           </div>
         </div>
