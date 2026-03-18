@@ -17,23 +17,56 @@ type SubSubCategory = { id: string; name: string };
 type SubCategory = { id: string; name: string; sub_sub_categories: SubSubCategory[] };
 type Category = { id: string; name: string; sub_categories: SubCategory[] };
 
-// ─── Header User Badge ────────────────────────────────────────────────────────
+// ─── Header User Badge (NOW AN INTERACTIVE DROPDOWN) ─────────────────────────
 function HeaderUserBadge() {
   const { profile, user } = useAuth()
+  const [isOpen, setIsOpen] = useState(false)
+
   const displayName = profile?.full_name || user?.email?.split("@")[0] || "User"
   const initials = displayName.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2)
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="hidden sm:flex flex-col items-end">
-        <span className="text-sm font-bold text-slate-700 leading-tight">{displayName}</span>
-        {profile?.roles?.name && (
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{profile.roles.name}</span>
-        )}
-      </div>
-      <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-black shadow-md shadow-blue-500/20 border-2 border-white shrink-0">
-        {initials}
-      </div>
+    <div className="relative">
+      <button 
+        onClick={() => setIsOpen(!isOpen)} 
+        className="flex items-center gap-3 text-left focus:outline-none p-1 rounded-lg hover:bg-slate-50 transition-colors"
+      >
+        <div className="hidden sm:flex flex-col items-end">
+          <span className="text-sm font-bold text-slate-700 leading-tight">{displayName}</span>
+          {profile?.roles?.name && (
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{profile.roles.name}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-black shadow-md shadow-blue-500/20 border-2 border-white shrink-0">
+            {initials}
+          </div>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </div>
+      </button>
+
+      {/* The Dropdown Menu */}
+      {isOpen && (
+        <>
+          {/* Invisible overlay to close dropdown when clicking outside */}
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+          
+          <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-50 overflow-hidden transform origin-top-right transition-all">
+            {/* Mobile-only user info inside dropdown */}
+            <div className="px-4 py-3 border-b border-slate-100 sm:hidden bg-slate-50">
+              <p className="text-sm font-bold text-slate-800 truncate">{displayName}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest truncate">{profile?.roles?.name || 'User'}</p>
+            </div>
+            
+            <div className="px-3 py-2 flex flex-col gap-1">
+              {/* Wrapping LogoutButton to ensure it fits the dropdown styling */}
+              <div className="w-full text-left rounded-lg hover:bg-red-50 transition-colors group">
+                <LogoutButton />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -92,9 +125,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const isProductsActive = pathname.includes("/products");
 
   return (
-    <div className="flex min-h-screen w-full bg-[#f4f6f9]">
+    <div className="flex min-h-screen w-full bg-[#f4f6f9] print:bg-white">
       {isSidebarOpen && (
-        <div className="fixed inset-0 z-20 bg-black/50 sm:hidden" onClick={() => setIsSidebarOpen(false)} />
+        <div className="fixed inset-0 z-20 bg-black/50 sm:hidden print:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
       {/* ── Sidebar ── */}
@@ -227,14 +260,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </li>
           </ul>
         </nav>
-
-        <div className="shrink-0 border-t border-white/5 p-3">
-          <LogoutButton />
-        </div>
       </aside>
 
       {/* ── Main Content ── */}
-      <main className="flex w-full flex-col sm:min-w-0 overflow-hidden">
+      <main className="flex w-full flex-col sm:min-w-0 overflow-hidden print:overflow-visible">
         <header className="print:hidden flex h-16 items-center justify-between bg-white px-4 sm:px-6 shadow-sm border-b border-slate-100 shrink-0 z-10">
           <button className="sm:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors" onClick={() => setIsSidebarOpen(true)}>
             <Menu className="h-5 w-5" />
@@ -250,7 +279,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <HeaderUserBadge />
           </div>
         </header>
-        <div className="flex-1 p-4 sm:p-6 overflow-auto">{children}</div>
+        <div className="flex-1 p-4 sm:p-6 overflow-auto print:p-0 print:overflow-visible">{children}</div>
       </main>
     </div>
   );

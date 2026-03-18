@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
-import { User, MapPin, Receipt, Truck, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, ChevronDown, ChevronUp, Package, History, Plus, X, CheckCircle, ImageIcon } from "lucide-react"
+import { User, MapPin, Receipt, Truck, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, ChevronDown, ChevronUp, Package, History, Plus, X, CheckCircle, ImageIcon, Ban, AlertTriangle } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
 export default function OrderDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -18,6 +18,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
   const [order, setOrder] = useState<any>(null)
   const [versions, setVersions] = useState<any[]>([])
   const [selectedVersion, setSelectedVersion] = useState<any>(null)
+  const [locations, setLocations] = useState<any[]>([])
   const [expandedDispatches, setExpandedDispatches] = useState<Record<string, boolean>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [dbError, setDbError] = useState<string | null>(null)
@@ -26,13 +27,18 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
   const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "Cash", reference: "", date: new Date().toISOString().split('T')[0] })
 
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false)
-  const [dispatchForm, setDispatchForm] = useState({ dispatch_number: "", transporter: "", tracking: "", date: new Date().toISOString().split('T')[0] })
+  const [dispatchForm, setDispatchForm] = useState({ dispatch_number: "", transporter: "", tracking: "", date: new Date().toISOString().split('T')[0], location_id: "" })
   const [dispatchItems, setDispatchItems] = useState<Record<string, number>>({})
+
+  // --- NEW CANCEL / REFUND STATE ---
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
+  const [refundForm, setRefundForm] = useState({ mode: "Cash", reference: "", date: new Date().toISOString().split('T')[0] })
 
   const [isSaving, setIsSaving] = useState(false)
 
   const syncOrderStatus = async () => {
     const { data: latestOrder } = await supabase.from('orders').select(`
+      status,
       total_amount,
       order_items ( quantity_ordered ),
       dispatch_notes ( dispatch_items ( quantity_dispatched ) ),
@@ -40,6 +46,8 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
     `).eq('id', orderId).single();
 
     if (!latestOrder) return;
+
+    if (latestOrder.status === 'Cancelled') return;
 
     let totalOrdered = 0;
     let totalDispatched = 0;
@@ -77,7 +85,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
       customers ( name, mobile, city, billing_address, state, gst_number ),
       order_items ( id, item_id, quantity_ordered, unit_price, items ( name, sku, image_path, gst_rate, pack_size, sub_categories(name), sub_sub_categories(name) ) ),
       payments ( id, amount, payment_mode, transaction_reference, created_at ),
-      dispatch_notes ( id, dispatch_number, dispatched_at, transporter_name, tracking_info, dispatch_items ( item_id, quantity_dispatched, items(name, sku) ) )
+      dispatch_notes ( id, dispatch_number, dispatched_at, transporter_name, tracking_info, dispatch_items ( item_id, quantity_dispatched, items(name, sku, pack_size), locations(name) ) )
     `).eq('id', orderId).maybeSingle();
 
     if (error) { setDbError(error.message); setIsLoading(false); return; }
@@ -91,13 +99,46 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
     setIsLoading(false);
   }
 
-  useEffect(() => { loadOrder(); }, [supabase, orderId]);
+  useEffect(() => {
+    supabase.from('locations').select('id, name').then(({ data }) => {
+      if (data) setLocations(data);
+    });
+    loadOrder();
+  }, [supabase, orderId]);
 
-  const handleDelete = async () => {
-    if (!window.confirm(`Are you absolutely sure you want to delete order ${order?.order_number}? This cannot be undone.`)) return;
-    const { error } = await supabase.from('orders').delete().eq('id', orderId);
-    if (!error) router.push('/orders');
-    else alert("Failed to delete order: " + error.message);
+  // --- SAFE CANCEL WORKFLOW ---
+  const handleCancelClick = () => {
+    // Calculate total paid so far
+    const paidSoFar = order?.payments?.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) || 0;
+
+    if (paidSoFar > 0) {
+      // If money was collected, open the refund modal
+      setIsCancelModalOpen(true);
+    } else {
+      // If no money was collected, just confirm and cancel
+      if (window.confirm(`Are you absolutely sure you want to CANCEL order ${order?.order_number}? Stock will be returned to inventory.`)) {
+        executeCancellation(0);
+      }
+    }
+  }
+
+  const executeCancellation = async (refundAmount: number) => {
+    setIsSaving(true);
+    const { error } = await supabase.rpc('cancel_order_logic', {
+      p_order_id: orderId,
+      p_refund_amount: refundAmount,
+      p_refund_mode: refundForm.mode,
+      p_refund_ref: refundForm.reference,
+      p_refund_date: new Date(refundForm.date).toISOString()
+    });
+
+    if (error) {
+      alert("Failed to cancel order: " + error.message);
+    } else {
+      setIsCancelModalOpen(false);
+      await loadOrder();
+    }
+    setIsSaving(false);
   }
 
   const toggleDispatch = (id: string) => setExpandedDispatches(prev => ({ ...prev, [id]: !prev[id] }));
@@ -144,7 +185,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
       else nextNumStr = `DN-${Date.now().toString().slice(-4)}`;
     }
 
-    setDispatchForm({ dispatch_number: nextNumStr, transporter: "", tracking: "", date: new Date().toISOString().split('T')[0] });
+    setDispatchForm({ dispatch_number: nextNumStr, transporter: "", tracking: "", date: new Date().toISOString().split('T')[0], location_id: "" });
     setDispatchItems({});
     setIsDispatchModalOpen(true);
   }
@@ -153,26 +194,63 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
     const itemsToDispatch = Object.entries(dispatchItems).filter(([_, qty]) => qty > 0);
     if (itemsToDispatch.length === 0) return alert("Please select at least one item to dispatch.");
     if (!dispatchForm.dispatch_number) return alert("Dispatch number is required.");
+    if (!dispatchForm.location_id) return alert("Please select a pick location.");
 
     setIsSaving(true);
 
-    const { data: newNote, error: noteError } = await supabase.from('dispatch_notes').insert([{
-      order_id: orderId,
-      dispatch_number: dispatchForm.dispatch_number,
-      transporter_name: dispatchForm.transporter,
-      tracking_info: dispatchForm.tracking,
-      dispatched_at: new Date(dispatchForm.date).toISOString()
-    }]).select().single();
-
-    if (noteError) { alert("Error creating dispatch note: " + noteError.message); setIsSaving(false); return; }
-
-    const dItemsPayload = itemsToDispatch.map(([orderItemId, qty]) => {
+    // Build items payload for the atomic function
+    const itemsPayload = itemsToDispatch.map(([orderItemId, qty]) => {
       const orderItem = order.order_items.find((oi: any) => oi.id === orderItemId);
-      return { dispatch_note_id: newNote.id, order_item_id: orderItem.id, item_id: orderItem.item_id, quantity_dispatched: qty };
+      return {
+        order_item_id: orderItem.id,
+        item_id: orderItem.item_id,
+        location_id: dispatchForm.location_id,
+        quantity_dispatched: qty,
+      };
     });
 
-    const { error: itemsError } = await supabase.from('dispatch_items').insert(dItemsPayload);
-    if (itemsError) alert("Error saving dispatch items: " + itemsError.message);
+    // Single atomic call:
+    //   - inserts dispatch_note
+    //   - inserts dispatch_items
+    //   - deducts stock.quantity per location (most-stock-first)
+    //   - logs each deduction in stock_ledger
+    //   - rolls back everything on error
+    const { data: result, error: rpcError } = await supabase.rpc(
+      'create_dispatch_note_atomic',
+      {
+        p_order_id: orderId,
+        p_dispatch_number: dispatchForm.dispatch_number,
+        p_transporter: dispatchForm.transporter || null,
+        p_tracking: dispatchForm.tracking || null,
+        p_dispatched_at: new Date(dispatchForm.date).toISOString(),
+        p_items: itemsPayload,
+      }
+    );
+
+    if (rpcError) {
+      alert("Dispatch failed: " + rpcError.message);
+      setIsSaving(false);
+      return;
+    }
+
+    if (!result.success) {
+      const errMsg: string = result.error || "Unknown error";
+
+      // Parse stock shortage: "INSUFFICIENT_STOCK::ItemName::available::requested"
+      if (errMsg.includes("INSUFFICIENT_STOCK")) {
+        const parts = errMsg.split("::");
+        alert(
+          `Cannot dispatch — not enough stock for "${parts[1]}".\n` +
+          `Available: ${parts[2]} · You entered: ${parts[3]}\n\n` +
+          `Please reduce the dispatch quantity and try again.`
+        );
+      } else {
+        alert("Dispatch failed: " + errMsg);
+      }
+
+      setIsSaving(false);
+      return;
+    }
 
     await syncOrderStatus();
     setIsDispatchModalOpen(false);
@@ -238,7 +316,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
             <button onClick={() => { router.refresh(); router.push('/orders'); }} className="p-2 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-blue-600 shadow-sm"><ArrowLeft className="w-5 h-5" /></button>
             <h1 className="text-xl font-bold text-slate-800">Back to Orders</h1>
           </div>
-          
+
           <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm">
             <Receipt className="w-4 h-4" /> Print Tax Invoice
           </button>
@@ -249,7 +327,12 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
             <div>
               <div className="flex items-center gap-3">
                 <h2 className="text-2xl font-black text-slate-800">{displayData.order_number}</h2>
-                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm ${displayData.status === 'Completed' ? 'bg-green-100 text-green-800 border border-green-200' : displayData.status === 'Pending' ? 'bg-red-100 text-red-800 border border-red-200' : displayData.status === 'On Credit' ? 'bg-blue-100 text-blue-800 border border-blue-300' : 'bg-yellow-100 text-yellow-800 border border-yellow-300'}`}>
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm ${displayData.status === 'Cancelled' ? 'bg-slate-200 text-slate-600 border border-slate-300' :
+                  displayData.status === 'Completed' ? 'bg-green-100 text-green-800 border border-green-200' :
+                    displayData.status === 'Pending' ? 'bg-red-100 text-red-800 border border-red-200' :
+                      displayData.status === 'On Credit' ? 'bg-blue-100 text-blue-800 border border-blue-300' :
+                        'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                  }`}>
                   {displayData.status}
                 </span>
                 {isHistorical && <span className="px-2.5 py-1 bg-purple-100 text-purple-800 border border-purple-200 rounded-full text-[10px] font-black uppercase flex items-center gap-1"><History className="w-3 h-3" /> Viewing V{selectedVersion.version_number}</span>}
@@ -273,7 +356,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
               </select>
             )}
 
-            {!isHistorical && (
+            {!isHistorical && displayData.status !== 'Cancelled' && (
               <>
                 {hasPermission('edit_orders') && (
                   <Link href={`/orders/${orderId}/edit`} className="bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm">
@@ -281,8 +364,8 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                   </Link>
                 )}
 
-                <button onClick={handleDelete} className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 px-4 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm">
-                  <Trash2 className="w-4 h-4" /> Delete
+                <button onClick={handleCancelClick} disabled={isSaving} className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 px-4 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm disabled:opacity-50">
+                  <Ban className="w-4 h-4" /> Cancel Order
                 </button>
               </>
             )}
@@ -366,7 +449,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                 <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2"><Package className="w-5 h-5 text-purple-600" /> Dispatch History</h3>
 
-                  {hasPermission('edit_dispatch') && (
+                  {hasPermission('edit_dispatch') && displayData.status !== 'Cancelled' && (
                     <button onClick={handleOpenDispatchModal} className="bg-purple-100 hover:bg-purple-200 text-purple-800 border border-purple-200 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition-colors">
                       <Plus className="w-3 h-3" /> Add Dispatch Note
                     </button>
@@ -382,12 +465,13 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                             <div className="flex flex-wrap gap-8 items-center">
                               <div><p className="text-[10px] font-bold text-slate-400 uppercase">Dispatch No.</p><p className="font-bold text-purple-700">{note.dispatch_number}</p></div>
                               <div><p className="text-[10px] font-bold text-slate-400 uppercase">Date</p><p className="font-medium text-slate-700">{new Date(note.dispatched_at).toLocaleDateString()}</p></div>
-                              {note.transporter_name && <div><p className="text-[10px] font-bold text-slate-400 uppercase">Transporter</p><p className="font-medium text-slate-700">{note.transporter_name}</p></div>}
+                              <div><p className="text-[10px] font-bold text-slate-400 uppercase">Delivery Mode</p><p className="font-medium text-slate-700">{note.transporter_name || "Self Pickup"}</p></div>
+                              <div><p className="text-[10px] font-bold text-slate-400 uppercase">Location</p><p className="font-medium text-slate-700">{note.dispatch_items?.[0]?.locations?.name || "—"}</p></div>
                               {note.tracking_info && <div><p className="text-[10px] font-bold text-slate-400 uppercase">Tracking</p><p className="font-mono text-slate-600 text-xs">{note.tracking_info}</p></div>}
                             </div>
 
                             <div className="flex items-center gap-3">
-                              {hasPermission('edit_dispatch') && (
+                              {hasPermission('edit_dispatch') && displayData.status !== 'Cancelled' && (
                                 <button onClick={(e) => handleDeleteDispatch(e, note.id, note.dispatch_number)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Delete Note">
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -400,16 +484,50 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                             <div className="p-4 bg-slate-50 border-t border-slate-200">
                               <table className="w-full text-xs text-left">
                                 <thead className="text-slate-400 border-b border-slate-200 uppercase tracking-wider">
-                                  <tr><th className="pb-2">Product Dispatched</th><th className="pb-2 text-right">Qty Sent</th></tr>
+                                  <tr>
+                                    <th className="pb-2">Product Dispatched</th>
+                                    <th className="pb-2 text-center">Pack Size</th>
+                                    <th className="pb-2 text-right">Qty Sent</th>
+                                    <th className="pb-2 text-right text-purple-600">Bundles</th>
+                                  </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-200">
-                                  {note.dispatch_items?.map((dItem: any, idx: number) => (
-                                    <tr key={idx}>
-                                      <td className="py-3 font-bold text-slate-700">{dItem.items?.name} <span className="font-mono font-normal text-slate-500 ml-2">({dItem.items?.sku})</span></td>
-                                      <td className="py-3 text-right font-black text-slate-800 text-sm">{dItem.quantity_dispatched}</td>
-                                    </tr>
-                                  ))}
+                                  {note.dispatch_items?.map((dItem: any, idx: number) => {
+                                    const packSize = dItem.items?.pack_size || 1
+                                    const bundles = Math.ceil(dItem.quantity_dispatched / packSize)
+                                    return (
+                                      <tr key={idx}>
+                                        <td className="py-3 font-bold text-slate-700">
+                                          {dItem.items?.name}
+                                          <span className="font-mono font-normal text-slate-400 ml-2">({dItem.items?.sku})</span>
+                                        </td>
+                                        <td className="py-3 text-center">
+                                          <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                                            {packSize}
+                                          </span>
+                                        </td>
+                                        <td className="py-3 text-right font-black text-slate-800 text-sm">
+                                          {dItem.quantity_dispatched}
+                                        </td>
+                                        <td className="py-3 text-right">
+                                          <span className="font-black text-purple-700 bg-purple-50 px-2 py-0.5 rounded">
+                                            {bundles}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
                                 </tbody>
+                                <tfoot className="border-t border-slate-200">
+                                  <tr>
+                                    <td colSpan={3} className="pt-2 text-right font-bold text-slate-500 uppercase text-[10px] tracking-wide">Total Bundles</td>
+                                    <td className="pt-2 text-right font-black text-purple-700">
+                                      {note.dispatch_items?.reduce((total: number, dItem: any) =>
+                                        total + Math.ceil(dItem.quantity_dispatched / (dItem.items?.pack_size || 1)), 0
+                                      )}
+                                    </td>
+                                  </tr>
+                                </tfoot>
                               </table>
                             </div>
                           )}
@@ -447,16 +565,17 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
 
             {!isHistorical && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-0 overflow-hidden">
-                <div className={`p-6 text-center ${balanceDue === 0 ? 'bg-green-600' : 'bg-slate-800'}`}>
+                <div className={`p-6 text-center ${displayData.status === 'Cancelled' ? 'bg-slate-600' : balanceDue === 0 ? 'bg-green-600' : 'bg-slate-800'}`}>
                   <p className="text-white/70 font-bold uppercase tracking-wider text-xs mb-1">Balance Due</p>
-                  <h2 className="text-4xl font-black text-white">₹{balanceDue.toLocaleString()}</h2>
-                  {balanceDue === 0 && <span className="inline-flex items-center gap-1 text-green-200 text-xs font-bold mt-2"><CheckCircle className="w-4 h-4" /> Fully Paid</span>}
+                  <h2 className="text-4xl font-black text-white">₹{displayData.status === 'Cancelled' ? '0' : balanceDue.toLocaleString()}</h2>
+                  {balanceDue === 0 && displayData.status !== 'Cancelled' && <span className="inline-flex items-center gap-1 text-green-200 text-xs font-bold mt-2"><CheckCircle className="w-4 h-4" /> Fully Paid</span>}
                 </div>
 
                 <div className="p-5">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2"><CreditCard className="w-4 h-4 text-green-600" /> Payment History</h3>
-                    {balanceDue > 0 && (
+
+                    {balanceDue > 0 && displayData.status !== 'Cancelled' && (
                       <button onClick={() => setIsPaymentModalOpen(true)} className="bg-green-100 hover:bg-green-200 text-green-800 border border-green-200 px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 shadow-sm transition-colors">
                         <Plus className="w-3 h-3" /> Add Pay
                       </button>
@@ -468,8 +587,13 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                       {order.payments.map((p: any) => (
                         <div key={p.id} className="bg-slate-50 border border-slate-100 p-3 rounded-lg flex justify-between items-center">
                           <div>
-                            <p className="font-bold text-green-700">₹{p.amount.toLocaleString()}</p>
-                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">{new Date(p.created_at).toLocaleDateString()} • {p.payment_mode}</p>
+                            <p className={`font-bold ${p.amount < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                              {p.amount < 0 ? '-' : ''}₹{Math.abs(p.amount).toLocaleString()}
+                            </p>
+                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              {new Date(p.created_at).toLocaleDateString()} • {p.payment_mode}
+                              {p.amount < 0 && <span className="ml-2 font-bold text-red-500 uppercase">Refund</span>}
+                            </p>
                           </div>
                           {p.transaction_reference && <span className="text-[10px] font-mono bg-white border border-slate-200 px-2 py-1 rounded text-slate-500 max-w-[80px] truncate" title={p.transaction_reference}>{p.transaction_reference}</span>}
                         </div>
@@ -491,6 +615,37 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
         </div>
 
         {/* --- MODALS --- */}
+
+        {/* CANCEL ORDER / REFUND MODAL */}
+        {isCancelModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col border-2 border-red-500">
+              <div className="p-5 border-b border-red-100 flex gap-3 items-center bg-red-50">
+                <div className="p-2 bg-red-200 text-red-700 rounded-full"><AlertTriangle className="w-5 h-5" /></div>
+                <div>
+                  <h2 className="text-lg font-bold text-red-800">Cancel & Refund Order</h2>
+                  <p className="text-xs text-red-600/80 font-medium">Stock will be restored to inventory automatically.</p>
+                </div>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-center mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Amount to Refund</span>
+                  <span className="font-black text-3xl text-slate-800">₹{totalPaid.toLocaleString()}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">Refund Mode</label><select value={refundForm.mode} onChange={e => setRefundForm({ ...refundForm, mode: e.target.value })} className="w-full p-2.5 mt-1 border border-slate-300 rounded-lg outline-none focus:border-red-500 bg-white"><option value="Cash">Cash</option><option value="Bank Transfer">Bank Transfer</option><option value="UPI">UPI</option><option value="Card">Card</option></select></div>
+                  <div><label className="text-xs font-bold text-slate-500 uppercase">Refund Date</label><input type="date" value={refundForm.date} onChange={e => setRefundForm({ ...refundForm, date: e.target.value })} className="w-full p-2.5 mt-1 border border-slate-300 rounded-lg outline-none focus:border-red-500" /></div>
+                </div>
+                <div><label className="text-xs font-bold text-slate-500 uppercase">Reference / Txn ID</label><input type="text" value={refundForm.reference} onChange={e => setRefundForm({ ...refundForm, reference: e.target.value })} className="w-full p-2.5 mt-1 border border-slate-300 rounded-lg outline-none focus:border-red-500 font-mono" placeholder="Optional" /></div>
+              </div>
+              <div className="p-5 border-t border-slate-100 bg-slate-50 flex gap-3">
+                <button onClick={() => setIsCancelModalOpen(false)} className="flex-1 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100">Abort</button>
+                <button onClick={() => executeCancellation(totalPaid)} disabled={isSaving} className="flex-1 py-2.5 bg-red-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-red-700 disabled:opacity-50">Process Refund</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ADD PAYMENT MODAL */}
         {isPaymentModalOpen && (
@@ -533,9 +688,16 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-purple-50 border border-purple-100 rounded-xl">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-purple-50 border border-purple-100 rounded-xl">
                   <div><label className="text-[10px] font-bold text-purple-800 uppercase">Dispatch No *</label><input type="text" value={dispatchForm.dispatch_number} onChange={e => setDispatchForm({ ...dispatchForm, dispatch_number: e.target.value })} className="w-full p-2 mt-1 border border-purple-200 rounded outline-none focus:ring-1 focus:ring-purple-500 font-bold" /></div>
                   <div><label className="text-[10px] font-bold text-purple-800 uppercase">Date</label><input type="date" value={dispatchForm.date} onChange={e => setDispatchForm({ ...dispatchForm, date: e.target.value })} className="w-full p-2 mt-1 border border-purple-200 rounded outline-none focus:ring-1 focus:ring-purple-500" /></div>
+                  <div>
+                    <label className="text-[10px] font-bold text-purple-800 uppercase">Pick Location *</label>
+                    <select value={dispatchForm.location_id} onChange={e => setDispatchForm({ ...dispatchForm, location_id: e.target.value })} className="w-full p-2 mt-1 border border-purple-200 rounded outline-none focus:ring-1 focus:ring-purple-500 bg-white">
+                      <option value="">Select...</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </div>
                   <div><label className="text-[10px] font-bold text-purple-800 uppercase">Transporter Name</label><input type="text" value={dispatchForm.transporter} onChange={e => setDispatchForm({ ...dispatchForm, transporter: e.target.value })} className="w-full p-2 mt-1 border border-purple-200 rounded outline-none focus:ring-1 focus:ring-purple-500" placeholder="Optional" /></div>
                   <div><label className="text-[10px] font-bold text-purple-800 uppercase">Tracking Info</label><input type="text" value={dispatchForm.tracking} onChange={e => setDispatchForm({ ...dispatchForm, tracking: e.target.value })} className="w-full p-2 mt-1 border border-purple-200 rounded outline-none focus:ring-1 focus:ring-purple-500" placeholder="AWB / Link" /></div>
                 </div>
@@ -544,7 +706,15 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                   <h4 className="font-bold text-slate-800 mb-3 text-sm">Select Quantities to Dispatch Now</h4>
                   <table className="w-full text-sm text-left border border-slate-200 rounded-lg overflow-hidden">
                     <thead className="bg-slate-100 border-b border-slate-200 text-[10px] uppercase text-slate-600 font-bold">
-                      <tr><th className="p-3">Product</th><th className="p-3 text-center">Ordered</th><th className="p-3 text-center">Already Sent</th><th className="p-3 text-center">Pending</th><th className="p-3 bg-purple-100 text-purple-900 text-center w-32">Dispatch Now</th></tr>
+                      <tr>
+                        <th className="p-3">Product</th>
+                        <th className="p-3 text-center">Ordered</th>
+                        <th className="p-3 text-center">Already Sent</th>
+                        <th className="p-3 text-center">Pending</th>
+                        <th className="p-3 text-center">Pack Size</th>
+                        <th className="p-3 bg-purple-100 text-purple-900 text-center w-32">Dispatch Now</th>
+                        <th className="p-3 text-center text-purple-700">Bundles</th>
+                      </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {order.order_items?.map((item: any) => {
@@ -554,10 +724,18 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
 
                         return (
                           <tr key={item.id} className={pending === 0 ? "bg-slate-50 opacity-60" : ""}>
-                            <td className="p-3"><p className="font-bold">{item.items?.name}</p><p className="text-[10px] font-mono text-slate-400">{item.items?.sku}</p></td>
+                            <td className="p-3">
+                              <p className="font-bold">{item.items?.name}</p>
+                              <p className="text-[10px] font-mono text-slate-400">{item.items?.sku}</p>
+                            </td>
                             <td className="p-3 text-center font-bold">{item.quantity_ordered}</td>
                             <td className="p-3 text-center text-slate-500">{previouslySent}</td>
                             <td className="p-3 text-center font-black text-orange-600">{pending}</td>
+                            <td className="p-3 text-center">
+                              <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                                {item.items?.pack_size || 1}
+                              </span>
+                            </td>
                             <td className="p-3 bg-purple-50">
                               <input
                                 type="number" min="0" max={pending} disabled={pending === 0}
@@ -569,6 +747,15 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                                 className="w-full p-1.5 border border-purple-300 rounded text-center font-bold outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-slate-200"
                               />
                             </td>
+                            <td className="p-3 text-center">
+                              {currentVal > 0 ? (
+                                <span className="font-black text-purple-700">
+                                  {Math.ceil(currentVal / (item.items?.pack_size || 1))}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
                           </tr>
                         )
                       })}
@@ -577,16 +764,53 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
                 </div>
               </div>
 
-              <div className="p-5 border-t border-slate-200 bg-slate-50 flex gap-4 shrink-0">
-                <button onClick={() => setIsDispatchModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 hover:bg-slate-100 transition-colors">Cancel</button>
-                <button onClick={handleSaveDispatch} disabled={isSaving} className="flex-[2] py-3 bg-purple-600 text-white rounded-lg font-bold shadow-md hover:bg-purple-700 transition-colors disabled:opacity-50">Save & Record Dispatch Note</button>
+              <div className="p-5 border-t border-slate-200 bg-slate-50 shrink-0">
+                {/* Bundle summary strip */}
+                {Object.values(dispatchItems).some(v => v > 0) && (
+                  <div className="flex flex-wrap gap-3 mb-4">
+                    {order.order_items
+                      ?.filter((item: any) => (dispatchItems[item.id] || 0) > 0)
+                      .map((item: any) => {
+                        const qty = dispatchItems[item.id] || 0
+                        const packSize = item.items?.pack_size || 1
+                        const bundles = Math.ceil(qty / packSize)
+                        return (
+                          <div key={item.id} className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5">
+                            <span className="text-xs font-bold text-slate-700 max-w-[120px] truncate">{item.items?.name}</span>
+                            <span className="text-[10px] text-slate-400">·</span>
+                            <span className="text-xs text-slate-500">{qty} qty</span>
+                            <span className="text-[10px] text-slate-400">÷</span>
+                            <span className="text-xs text-slate-500">pack {packSize}</span>
+                            <span className="text-[10px] text-slate-400">=</span>
+                            <span className="text-xs font-black text-purple-700">{bundles} bundle{bundles !== 1 ? "s" : ""}</span>
+                          </div>
+                        )
+                      })}
+                    <div className="flex items-center gap-2 bg-purple-700 text-white rounded-lg px-3 py-1.5 ml-auto">
+                      <span className="text-xs font-semibold">Total Bundles</span>
+                      <span className="text-base font-black">
+                        {order.order_items
+                          ?.reduce((total: number, item: any) => {
+                            const qty = dispatchItems[item.id] || 0
+                            if (!qty) return total
+                            return total + Math.ceil(qty / (item.items?.pack_size || 1))
+                          }, 0)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-4">
+                  <button onClick={() => setIsDispatchModalOpen(false)} className="flex-1 py-3 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 hover:bg-slate-100 transition-colors">Cancel</button>
+                  <button onClick={handleSaveDispatch} disabled={isSaving} className="flex-[2] py-3 bg-purple-600 text-white rounded-lg font-bold shadow-md hover:bg-purple-700 transition-colors disabled:opacity-50">Save & Record Dispatch Note</button>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-      {/* DASHBOARD ENDS HERE */}
-      </div> 
+        {/* --- WE CLOSE THE MAIN DASHBOARD DIV HERE! --- */}
+      </div>
 
       {/* --- INJECT CSS TO HIDE BROWSER URL/DATE HEADERS --- */}
       <style type="text/css" media="print">
@@ -597,11 +821,11 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
       </style>
 
       {/* --- PRINTABLE A4 ORDER (Only visible when printing) --- */}
-      <div 
+      <div
         className="hidden print:block w-full bg-white text-black p-4 font-sans"
         style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
       >
-        
+
         {/* Company Header */}
         <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-6">
           <div>
@@ -643,8 +867,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
               <p className="text-sm text-slate-600 mt-1"><span className="font-bold text-slate-800">Transporter:</span> {displayData.transporter_name}</p>
             )}
             <p className="text-sm text-slate-600 mt-1"><span className="font-bold text-slate-800">Order Status:</span> {displayData.status}</p>
-            
-            {/* NEW ACCURATE PAYMENT STATUS CALCULATION */}
+
             <p className="text-sm text-slate-600 mt-1">
               <span className="font-bold text-slate-800">Payment Status:</span>{' '}
               {balanceDue === 0 ? (
@@ -701,32 +924,32 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
           <div className="w-1/2">
             <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Declaration</p>
             <p className="text-xs text-slate-500 italic">We declare that this order shows the actual price of the goods described and that all particulars are true and correct.</p>
-            
+
             <div className="mt-16 text-center w-48">
               <div className="border-t-2 border-slate-300 pt-2 text-xs font-bold text-slate-800">Authorized Signatory</div>
             </div>
           </div>
-          
+
           <div className="w-80">
             <div className="space-y-2 text-sm border border-slate-200 rounded p-4 bg-slate-50">
-              <div className="flex justify-between"><span className="text-slate-600 font-medium">Subtotal</span><span className="font-bold">₹{subtotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-              {discountAmt > 0 && <div className="flex justify-between"><span className="text-slate-600 font-medium">Discount</span><span className="font-bold text-red-600">- ₹{discountAmt.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>}
-              
+              <div className="flex justify-between"><span className="text-slate-600 font-medium">Subtotal</span><span className="font-bold">₹{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+              {discountAmt > 0 && <div className="flex justify-between"><span className="text-slate-600 font-medium">Discount</span><span className="font-bold text-red-600">- ₹{discountAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>}
+
               <div className="h-px bg-slate-200 my-1"></div>
-              
+
               {displayData.customers?.state === "Maharashtra" ? (
                 <>
-                  <div className="flex justify-between text-xs"><span className="text-slate-500">CGST</span><span className="text-slate-700">₹{cgstTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-slate-500">SGST</span><span className="text-slate-700">₹{sgstTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-slate-500">CGST</span><span className="text-slate-700">₹{cgstTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-slate-500">SGST</span><span className="text-slate-700">₹{sgstTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                 </>
               ) : (
-                <div className="flex justify-between text-xs"><span className="text-slate-500">IGST</span><span className="text-slate-700">₹{igstTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-slate-500">IGST</span><span className="text-slate-700">₹{igstTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
               )}
-              
+
               <div className="h-px bg-slate-200 my-1"></div>
-              
+
               <div className="flex justify-between items-center"><span className="font-bold text-slate-800 uppercase">Grand Total</span><span className="text-xl font-black text-slate-900">₹{grandTotal.toLocaleString()}</span></div>
-              
+
               <div className="flex justify-between text-xs mt-2 pt-2 border-t border-slate-200"><span className="text-slate-500">Paid Amount</span><span className="text-green-700 font-bold">₹{totalPaid.toLocaleString()}</span></div>
               <div className="flex justify-between text-xs"><span className="text-slate-500 font-bold">Balance Due</span><span className="text-slate-800 font-black">₹{balanceDue.toLocaleString()}</span></div>
             </div>
@@ -738,4 +961,3 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
     </>
   )
 }
-      

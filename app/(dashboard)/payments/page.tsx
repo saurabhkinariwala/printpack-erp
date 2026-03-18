@@ -66,22 +66,27 @@ export default function PaymentsPage() {
 
   useEffect(() => { fetchPayments() }, [fetchPayments])
 
-  // ── Filtered ──
-  const filtered = payments.filter(p => {
-    const matchesMode = modeFilter === "All" || p.payment_mode === modeFilter
+  // ── Search-only filtered (for card summaries) ──
+  const searchFiltered = payments.filter(p => {
     const q = search.toLowerCase()
-    const matchesSearch = !q ||
+    return !q ||
       p.orders?.order_number?.toLowerCase().includes(q) ||
       p.orders?.customers?.name?.toLowerCase().includes(q) ||
       p.transaction_reference?.toLowerCase().includes(q) || false
-    return matchesMode && matchesSearch
   })
 
-  // ── Summaries ──
-  const totalAll = filtered.reduce((s, p) => s + Number(p.amount), 0)
+  // ── Filtered by mode + search (for table rows) ──
+  const filtered = searchFiltered.filter(p => {
+    return modeFilter === "All" || p.payment_mode === modeFilter
+  })
+
+  // ── Summaries (computed from search-only filtered, NOT mode-filtered) ──
+  const totalAll = searchFiltered.reduce((s, p) => s + Number(p.amount), 0)
   const byMode: Record<string, number> = {}
-  filtered.forEach(p => {
+  const countByMode: Record<string, number> = {}
+  searchFiltered.forEach(p => {
     byMode[p.payment_mode] = (byMode[p.payment_mode] || 0) + Number(p.amount)
+    countByMode[p.payment_mode] = (countByMode[p.payment_mode] || 0) + 1
   })
 
   const modes: ModeFilter[] = ["All", "Cash", "UPI", "Bank Transfer", "Card"]
@@ -130,7 +135,7 @@ export default function PaymentsPage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {modes.map(mode => {
           const amount = mode === "All" ? totalAll : (byMode[mode] || 0)
-          const count = mode === "All" ? filtered.length : filtered.filter(p => p.payment_mode === mode).length
+          const count = mode === "All" ? searchFiltered.length : (countByMode[mode] || 0)
           const cfg = mode !== "All" ? getModeConfig(mode) : null
           const Icon = cfg?.icon || TrendingUp
           const isActive = modeFilter === mode
