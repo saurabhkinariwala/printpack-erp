@@ -136,10 +136,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         <div className="flex h-16 items-center justify-between px-5 text-white border-b border-white/10 shrink-0">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-bold tracking-tight">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500 shadow-md shadow-blue-500/30">
-              <span className="font-black text-white text-sm">PP</span>
+              <span className="font-black text-white text-sm">{process.env.NEXT_PUBLIC_COMPANY_SHORT_NAME || "ERP"}</span>
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="text-white font-black text-sm">PrintPack</span>
+              <span className="text-white font-black text-sm">{process.env.NEXT_PUBLIC_COMPANY_NAME || "ERP Prime"}</span>
               <span className="text-slate-500 text-[10px] font-semibold uppercase tracking-widest">ERP Prime</span>
             </div>
           </Link>

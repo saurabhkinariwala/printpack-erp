@@ -28,7 +28,7 @@ export default function OrdersListPage() {
   useEffect(() => {
     fetchOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase]);
+  }, []);
 
   async function fetchOrders() {
     setIsLoading(true);

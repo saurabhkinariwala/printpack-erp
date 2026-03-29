@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Plus, Trash2, Save, User, MapPin, Receipt, Truck, CreditCard, Search, Image as ImageIcon, X, Layers, Minus, Calendar, Hash, Star } from "lucide-react"
-import { usePermissions } from "@/hooks/usePermissions"   // ← replaces useAuth
+import { usePermissions } from "@/hooks/usePermissions"
 
 const INDIAN_STATES = [
   "Maharashtra", "Andhra Pradesh", "Karnataka", "Tamil Nadu", "Telangana", "Kerala",
@@ -16,7 +16,7 @@ export default function NewOrderPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  const { isCategoryAllowed } = usePermissions()   // ← replaces hasPermission
+  const { isCategoryAllowed } = usePermissions()
 
   // --- CORE STATE ---
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0])
@@ -95,8 +95,6 @@ export default function NewOrderPage() {
     setPendingQtys(pendingMap);
 
     if (itemsData) {
-      // isCategoryAllowed reads from usePermissions which is already loaded in
-      // memory from AuthContext — no extra API call, instant filter.
       const permitted = itemsData.filter((item: any) =>
         isCategoryAllowed(item.sub_categories?.categories?.name)
       );
@@ -106,9 +104,14 @@ export default function NewOrderPage() {
     setIsLoadingCatalog(false);
   }
 
+  // SMART MULTI-SUBSTRING SEARCH LOGIC
   const filteredCatalog = catalogItems
-    .filter(item => `${item.sub_categories?.name} ${item.sub_sub_categories?.name} ${item.name} ${item.sku}`
-      .toLowerCase().includes(catalogSearch.toLowerCase()))
+    .filter(item => {
+      const searchableText = `${item.sub_categories?.name || ''} ${item.sub_sub_categories?.name || ''} ${item.name || ''} ${item.sku || ''}`.toLowerCase();
+      const searchTerms = catalogSearch.toLowerCase().trim().split(/\s+/);
+      // Ensures EVERY word typed by the user exists somewhere in the product string
+      return searchTerms.every(term => searchableText.includes(term));
+    })
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   const handleCatalogAdd = (item: any) => {

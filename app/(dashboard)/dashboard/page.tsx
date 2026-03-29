@@ -232,178 +232,181 @@ export default function DashboardPage() {
   ]
 
   return (
-    <div className="flex flex-col gap-6 pb-12">
+    <div className="flex flex-col gap-6 pb-12 print:pb-0 print:gap-0">
 
-      {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Dashboard</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Live business intelligence · PrintPack ERP</p>
-        </div>
-        <button
-          onClick={() => router.push("/orders/new")}
-          className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-md w-fit"
-        >
-          <Plus className="h-4 w-4" /> New Order
-        </button>
-      </div>
-
-      {/* ── Date Range ── */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
-          <div className="flex items-center gap-2">
-            <input
-              type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
-            />
-            <span className="text-slate-400 text-sm">to</span>
-            <input
-              type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
-            />
+      {/* Main dashboard content, hidden when printing the day book */}
+      <div className={`flex flex-col gap-6 ${isDayBookOpen ? 'print:hidden' : ''}`}>
+        {/* ── Header ── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">Dashboard</h2>
+            <p className="text-sm text-slate-500 mt-0.5">Live business intelligence · PrintPack ERP</p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            {[["today","Today"],["week","Last 7 Days"],["month","This Month"],["quarter","Last 3 Months"]].map(([k,l]) => (
-              <button key={k} onClick={() => setPreset(k)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-blue-100 hover:text-blue-700 text-slate-600 transition-colors border border-slate-200">{l}</button>
-            ))}
-          </div>
-          <button onClick={fetchData} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors">
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} /> Refresh
+          <button
+            onClick={() => router.push("/orders/new")}
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-md w-fit"
+          >
+            <Plus className="h-4 w-4" /> New Order
           </button>
         </div>
-      </div>
 
-      {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((k, i) => (
-          <div key={i} className={`bg-white rounded-xl border ${k.border} shadow-sm p-5 flex items-center gap-4`}>
-            <div className={`h-12 w-12 rounded-xl ${k.bg} flex items-center justify-center shrink-0`}>
-              <k.icon className={`h-5 w-5 ${k.color}`} />
+        {/* ── Date Range ── */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
+            <div className="flex items-center gap-2">
+              <input
+                type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
+              />
+              <span className="text-slate-400 text-sm">to</span>
+              <input
+                type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
+              />
             </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{k.label}</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">{isLoading ? "—" : k.value}</p>
+            <div className="flex gap-2 flex-wrap">
+              {[["today","Today"],["week","Last 7 Days"],["month","This Month"],["quarter","Last 3 Months"]].map(([k,l]) => (
+                <button key={k} onClick={() => setPreset(k)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-blue-100 hover:text-blue-700 text-slate-600 transition-colors border border-slate-200">{l}</button>
+              ))}
             </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Sales Trend ── */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-        <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-blue-500" /> Sales Trend
-          <span className="text-xs font-normal text-slate-400 ml-2">
-            {Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 31 ? "By Day" :
-             Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 90 ? "By Week" : "By Month"}
-          </span>
-        </h3>
-        {isLoading ? (
-          <div className="h-60 flex items-center justify-center text-slate-400 text-sm">Loading chart...</div>
-        ) : salesTrend.length === 0 ? (
-          <div className="h-60 flex items-center justify-center text-slate-400 text-sm">No orders in this period</div>
-        ) : (
-          <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={salesTrend} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={v => "₹" + (v >= 1000 ? (v/1000).toFixed(0)+"k" : v)} />
-                <Tooltip formatter={(v: unknown) => fmt(Number(v ?? 0))} labelStyle={{ fontWeight: "bold", color: "#1e293b" }} contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }} />
-                <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3, fill: "#3b82f6" }} activeDot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      {/* ── Top Products ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TopProductsCard title="🍞 Top 10 Bakery Products" products={topBakery} isLoading={isLoading} />
-        <TopProductsCard title="🎁 Top 10 Gift Box Products" products={topGiftBoxes} isLoading={isLoading} />
-      </div>
-
-      {/* ── Low Stock Alert ── */}
-      <div className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between p-5 border-b border-amber-100 bg-amber-50">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
-            <h3 className="font-bold text-slate-800">Low Stock Alerts</h3>
-            <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">{isLoading ? "…" : lowStockItems.length}</span>
-          </div>
-          <p className="text-xs text-slate-500">Bakery &lt;400 · Gift Boxes &lt;100</p>
-        </div>
-        {isLoading ? (
-          <div className="p-6 text-center text-slate-400 text-sm">Loading...</div>
-        ) : lowStockItems.length === 0 ? (
-          <div className="p-6 text-center text-green-600 text-sm font-semibold">✓ All stock levels are healthy</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-100">
-                <tr>
-                  <th className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase">Product</th>
-                  <th className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase">Category</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Current Qty</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Threshold</th>
-                  <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Deficit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {lowStockItems.map((item, i) => (
-                  <tr key={i} className="hover:bg-amber-50/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-800">{item.name}</p>
-                      <p className="text-xs text-slate-400 font-mono">{item.sku}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">{item.category}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className={`font-black text-base ${item.quantity === 0 ? "text-red-600" : "text-amber-600"}`}>{item.quantity}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-500 font-semibold">{item.threshold}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-bold text-red-600">-{item.threshold - item.quantity}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Sale Day Book ── */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Package className="h-5 w-5 text-indigo-500" />
-            <h3 className="font-bold text-slate-800">Sale Day Book</h3>
-          </div>
-          <div className="flex items-center gap-3 sm:ml-auto">
-            <input
-              type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-500 font-medium"
-            />
-            <button
-              onClick={fetchDayBook}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm"
-            >
-              <Download className="h-4 w-4" /> Generate Report
+            <button onClick={fetchData} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors">
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} /> Refresh
             </button>
+          </div>
+        </div>
+
+        {/* ── KPI Cards ── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.map((k, i) => (
+            <div key={i} className={`bg-white rounded-xl border ${k.border} shadow-sm p-5 flex items-center gap-4`}>
+              <div className={`h-12 w-12 rounded-xl ${k.bg} flex items-center justify-center shrink-0`}>
+                <k.icon className={`h-5 w-5 ${k.color}`} />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{k.label}</p>
+                <p className="text-xl font-black text-slate-800 mt-0.5">{isLoading ? "—" : k.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Sales Trend ── */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-500" /> Sales Trend
+            <span className="text-xs font-normal text-slate-400 ml-2">
+              {Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 31 ? "By Day" :
+               Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 90 ? "By Week" : "By Month"}
+            </span>
+          </h3>
+          {isLoading ? (
+            <div className="h-60 flex items-center justify-center text-slate-400 text-sm">Loading chart...</div>
+          ) : salesTrend.length === 0 ? (
+            <div className="h-60 flex items-center justify-center text-slate-400 text-sm">No orders in this period</div>
+          ) : (
+            <div className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={salesTrend} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={v => "₹" + (v >= 1000 ? (v/1000).toFixed(0)+"k" : v)} />
+                  <Tooltip formatter={(v: unknown) => fmt(Number(v ?? 0))} labelStyle={{ fontWeight: "bold", color: "#1e293b" }} contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3, fill: "#3b82f6" }} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        {/* ── Top Products ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <TopProductsCard title="🍞 Top 10 Bakery Products" products={topBakery} isLoading={isLoading} />
+          <TopProductsCard title="🎁 Top 10 Gift Box Products" products={topGiftBoxes} isLoading={isLoading} />
+        </div>
+
+        {/* ── Low Stock Alert ── */}
+        <div className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between p-5 border-b border-amber-100 bg-amber-50">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <h3 className="font-bold text-slate-800">Low Stock Alerts</h3>
+              <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">{isLoading ? "…" : lowStockItems.length}</span>
+            </div>
+            <p className="text-xs text-slate-500">Bakery &lt;400 · Gift Boxes &lt;100</p>
+          </div>
+          {isLoading ? (
+            <div className="p-6 text-center text-slate-400 text-sm">Loading...</div>
+          ) : lowStockItems.length === 0 ? (
+            <div className="p-6 text-center text-green-600 text-sm font-semibold">✓ All stock levels are healthy</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-100">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase">Product</th>
+                    <th className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase">Category</th>
+                    <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Current Qty</th>
+                    <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Threshold</th>
+                    <th className="text-right px-4 py-3 text-xs font-bold text-slate-500 uppercase">Deficit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {lowStockItems.map((item, i) => (
+                    <tr key={i} className="hover:bg-amber-50/50 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-slate-800">{item.name}</p>
+                        <p className="text-xs text-slate-400 font-mono">{item.sku}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 text-xs">{item.category}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className={`font-black text-base ${item.quantity === 0 ? "text-red-600" : "text-amber-600"}`}>{item.quantity}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-500 font-semibold">{item.threshold}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-bold text-red-600">-{item.threshold - item.quantity}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* ── Sale Day Book ── */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-indigo-500" />
+              <h3 className="font-bold text-slate-800">Sale Day Book</h3>
+            </div>
+            <div className="flex items-center gap-3 sm:ml-auto">
+              <input
+                type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-500 font-medium"
+              />
+              <button
+                onClick={fetchDayBook}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm"
+              >
+                <Download className="h-4 w-4" /> Generate Report
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── Day Book Modal ── */}
       {isDayBookOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8">
-          <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50 shrink-0">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8 print:static print:bg-white print:p-0 print:block">
+          <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col print:shadow-none print:max-h-none print:h-auto print:block">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50 shrink-0 print:p-0 print:bg-white print:border-none print:mb-6">
               <div>
-                <h2 className="text-lg font-bold text-slate-800">Sale Day Book</h2>
+                <h2 className="text-lg font-bold text-slate-800 print:text-2xl">Sale Day Book</h2>
                 <p className="text-sm text-slate-500">All orders for {fmtDate(dayBookDate)}</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 print:hidden">
                 <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
                   <Printer className="h-3.5 w-3.5" /> Print
                 </button>
@@ -413,7 +416,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 print:overflow-visible print:p-0">
               {isDayBookLoading ? (
                 <div className="py-20 text-center text-slate-400">Loading day book...</div>
               ) : dayBookData.length === 0 ? (
@@ -421,23 +424,23 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-4">
                   {dayBookData.map((entry, i) => (
-                    <div key={i} className="border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3">
+                    <div key={i} className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300 print:rounded-lg print:break-inside-avoid">
+                      <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3 print:bg-slate-100 print:text-slate-900 print:border-b print:border-slate-300">
                         <div className="flex items-center gap-4">
                           <button
                             onClick={() => router.push(`/orders/${entry.order_id}`)}
-                            className="font-bold text-blue-300 hover:text-blue-200 underline underline-offset-2 text-sm"
+                            className="font-bold text-blue-300 hover:text-blue-200 underline underline-offset-2 text-sm print:text-slate-900 print:no-underline"
                           >
                             {entry.order_number}
                           </button>
                           <div className="flex items-center gap-1.5">
-                            <Users className="h-3.5 w-3.5 text-slate-400" />
+                            <Users className="h-3.5 w-3.5 text-slate-400 print:text-slate-600" />
                             <span className="text-sm font-semibold">{entry.customer_name}</span>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-xs text-slate-400">Order Value</p>
-                          <p className="font-black text-white">{fmt(entry.total_amount)}</p>
+                          <p className="text-xs text-slate-400 print:text-slate-600">Order Value</p>
+                          <p className="font-black text-white print:text-slate-900">{fmt(entry.total_amount)}</p>
                         </div>
                       </div>
                       <table className="w-full text-xs">
@@ -449,7 +452,7 @@ export default function DashboardPage() {
                             <th className="text-right px-4 py-2 text-slate-500 font-bold uppercase">Amount</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50">
+                        <tbody className="divide-y divide-slate-50 print:divide-slate-200">
                           {entry.items.map((item, j) => (
                             <tr key={j} className="hover:bg-slate-50">
                               <td className="px-4 py-2 font-medium text-slate-700">{item.name}</td>
@@ -470,20 +473,20 @@ export default function DashboardPage() {
                   ))}
 
                   {/* ── Day Book Summary ── */}
-                  <div className="mt-6 p-5 bg-slate-900 rounded-xl text-white">
-                    <h4 className="font-bold mb-3 text-slate-300 uppercase text-xs tracking-wider">Day Summary · {fmtDate(dayBookDate)}</h4>
+                  <div className="mt-6 p-5 bg-slate-900 rounded-xl text-white print:bg-white print:border print:border-slate-300 print:text-slate-900 print:break-inside-avoid">
+                    <h4 className="font-bold mb-3 text-slate-300 uppercase text-xs tracking-wider print:text-slate-500">Day Summary · {fmtDate(dayBookDate)}</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                       <div>
-                        <p className="text-slate-400 text-xs">Total Orders</p>
+                        <p className="text-slate-400 text-xs print:text-slate-500">Total Orders</p>
                         <p className="text-2xl font-black">{dayBookData.length}</p>
                       </div>
                       <div>
-                        <p className="text-slate-400 text-xs">Gross Revenue</p>
-                        <p className="text-2xl font-black text-blue-300">{fmt(dayBookData.reduce((s, e) => s + e.total_amount, 0))}</p>
+                        <p className="text-slate-400 text-xs print:text-slate-500">Gross Revenue</p>
+                        <p className="text-2xl font-black text-blue-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.total_amount, 0))}</p>
                       </div>
                       <div>
-                        <p className="text-slate-400 text-xs">Collected Today</p>
-                        <p className="text-2xl font-black text-green-300">{fmt(dayBookData.reduce((s, e) => s + e.payments_on_day, 0))}</p>
+                        <p className="text-slate-400 text-xs print:text-slate-500">Collected Today</p>
+                        <p className="text-2xl font-black text-green-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.payments_on_day, 0))}</p>
                       </div>
                     </div>
                   </div>

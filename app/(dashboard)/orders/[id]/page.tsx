@@ -829,7 +829,7 @@ export default function OrderDetailsPage({ params }: { params: Promise<{ id: str
         {/* Company Header */}
         <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-6">
           <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">PrintPack</h1>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">{process.env.NEXT_PUBLIC_COMPANY_NAME || "Company Name"}</h1>
             <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest mt-1">Premium Quality Packaging</p>
             <div className="mt-3 text-xs text-slate-600 space-y-0.5">
               <p>123 Industrial Estate, Phase 1</p>
