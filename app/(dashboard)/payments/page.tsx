@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
-import { CreditCard, Wallet, Landmark, Smartphone, TrendingUp, Calendar, Search, ArrowUpRight, RefreshCw, X } from "lucide-react"
+import { CreditCard, Wallet, Landmark, Smartphone, TrendingUp, Calendar, Search, ArrowUpRight, RefreshCw, X, Receipt } from "lucide-react"
 
 type Payment = {
   id: string
@@ -11,10 +11,15 @@ type Payment = {
   payment_mode: string
   payment_date: string
   transaction_reference: string | null
-  order_id: string
+  order_id: string | null
+  cash_memo_id: string | null
   orders: {
     order_number: string
     customers: { name: string } | null
+  } | null
+  cash_memos: {
+    memo_number: string
+    customer_name: string | null
   } | null
 }
 
@@ -50,11 +55,13 @@ export default function PaymentsPage() {
 
   const fetchPayments = useCallback(async () => {
     setIsLoading(true)
+    // UPGRADED QUERY: Now pulling both orders AND cash_memos simultaneously
     const { data, error } = await supabase
       .from("payments")
       .select(`
-        id, amount, payment_mode, payment_date, transaction_reference, order_id,
-        orders(order_number, customers(name))
+        id, amount, payment_mode, payment_date, transaction_reference, order_id, cash_memo_id,
+        orders(order_number, customers(name)),
+        cash_memos(memo_number, customer_name)
       `)
       .gte("payment_date", startDate + "T00:00:00")
       .lte("payment_date", endDate + "T23:59:59")
@@ -66,21 +73,21 @@ export default function PaymentsPage() {
 
   useEffect(() => { fetchPayments() }, [fetchPayments])
 
-  // ── Search-only filtered (for card summaries) ──
+  // UPGRADED SEARCH: Checks both order data and cash memo data
   const searchFiltered = payments.filter(p => {
     const q = search.toLowerCase()
     return !q ||
       p.orders?.order_number?.toLowerCase().includes(q) ||
+      p.cash_memos?.memo_number?.toLowerCase().includes(q) ||
       p.orders?.customers?.name?.toLowerCase().includes(q) ||
+      p.cash_memos?.customer_name?.toLowerCase().includes(q) ||
       p.transaction_reference?.toLowerCase().includes(q) || false
   })
 
-  // ── Filtered by mode + search (for table rows) ──
   const filtered = searchFiltered.filter(p => {
     return modeFilter === "All" || p.payment_mode === modeFilter
   })
 
-  // ── Summaries (computed from search-only filtered, NOT mode-filtered) ──
   const totalAll = searchFiltered.reduce((s, p) => s + Number(p.amount), 0)
   const byMode: Record<string, number> = {}
   const countByMode: Record<string, number> = {}
@@ -98,7 +105,7 @@ export default function PaymentsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Payment Transactions</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Track all inflows by mode and period</p>
+          <p className="text-sm text-slate-500 mt-0.5">Track all inflows from Orders and Cash Memos</p>
         </div>
       </div>
 
@@ -117,7 +124,7 @@ export default function PaymentsPage() {
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
-            type="text" placeholder="Search order, customer, ref…" value={search} onChange={e => setSearch(e.target.value)}
+            type="text" placeholder="Search order, memo, customer…" value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-8 py-1.5 text-sm border border-slate-300 rounded-lg outline-none focus:border-blue-500"
           />
           {search && (
@@ -183,7 +190,7 @@ export default function PaymentsPage() {
               <thead className="bg-slate-50 border-b border-slate-100">
                 <tr>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Date</th>
-                  <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Order</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Source</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Customer</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Mode</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Reference</th>
@@ -194,22 +201,30 @@ export default function PaymentsPage() {
                 {filtered.map(p => {
                   const cfg = getModeConfig(p.payment_mode)
                   const Icon = cfg.icon
+                  
+                  // Determine if this is an Order or a Cash Memo
+                  const isCashMemo = !!p.cash_memos;
+                  const sourceNumber = isCashMemo ? p.cash_memos?.memo_number : p.orders?.order_number;
+                  const customerName = isCashMemo ? p.cash_memos?.customer_name : p.orders?.customers?.name;
+
                   return (
                     <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-5 py-3.5 text-slate-600 text-xs whitespace-nowrap">
                         {fmtDateTime(p.payment_date)}
                       </td>
                       <td className="px-5 py-3.5">
-                        <button
-                          onClick={() => router.push(`/orders/${p.order_id}`)}
-                          className="font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 text-xs"
-                        >
-                          {p.orders?.order_number || "—"}
-                          <ArrowUpRight className="h-3 w-3" />
-                        </button>
+                        {isCashMemo ? (
+                           <button onClick={() => router.push(`/cash-memo`)} className="font-bold text-purple-600 hover:text-purple-800 hover:underline flex items-center gap-1 text-xs">
+                             <Receipt className="w-3 h-3"/> {sourceNumber}
+                           </button>
+                        ) : (
+                           <button onClick={() => router.push(`/orders/${p.order_id}`)} className="font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 text-xs">
+                             {sourceNumber || "—"} <ArrowUpRight className="h-3 w-3" />
+                           </button>
+                        )}
                       </td>
                       <td className="px-5 py-3.5 font-semibold text-slate-700">
-                        {p.orders?.customers?.name || "—"}
+                        {customerName || "Walk-in"}
                       </td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${cfg.bg} ${cfg.color} ${cfg.border} border`}>

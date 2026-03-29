@@ -5,19 +5,6 @@ import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/context/AuthContext"
 import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users } from "lucide-react"
 
-// THE MASTER LIST OF FEATURES: 
-// To add a new feature to your app in the future, just add a line here!
-const AVAILABLE_PERMISSIONS = [
-  { key: 'view_dashboard', label: 'Dashboard Visibility', description: 'Can view the main analytics dashboard and revenue.' },
-  { key: 'access_bakery', label: 'Bakery Category', description: 'Can view and add Bakery items to orders.' },
-  { key: 'access_giftbox', label: 'Gift Box Category', description: 'Can view and add Gift Box items to orders.' },
-  { key: 'edit_products', label: 'Manage Products', description: 'Can add, edit, or delete items from the master catalog.' },
-  { key: 'edit_orders', label: 'Edit Orders', description: 'Can modify order details, items, and discounts.' },
-  { key: 'delete_orders', label: 'Delete Orders', description: 'Can permanently delete orders from the database.' },
-  { key: 'edit_dispatch', label: 'Manage Dispatch', description: 'Can create and delete dispatch notes for shipments.' },
-  { key: 'manage_roles', label: 'Administrator Access', description: 'SUPER ADMIN: Can access this page and change security roles.' },
-]
-
 export default function RolesManagementPage() {
   const supabase = createClient()
   const { hasPermission, isLoading: authLoading } = useAuth()
@@ -26,27 +13,48 @@ export default function RolesManagementPage() {
   const [selectedRole, setSelectedRole] = useState<any>(null)
   const [permissions, setPermissions] = useState<Record<string, boolean>>({})
   
+  // NEW: Dynamic permissions array extracted from the DB
+  const [dynamicPermissions, setDynamicPermissions] = useState<{key: string, label: string}[]>([])
+  const [newPermKey, setNewPermKey] = useState("")
+  
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [newRoleName, setNewRoleName] = useState("")
 
-  useEffect(() => {
+useEffect(() => {
     async function fetchRoles() {
       const { data, error } = await supabase.from('roles').select('*').order('name')
       if (data) {
         setRoles(data)
-        // Auto-select the first role to show in the UI
+        
+        // DYNAMIC EXTRACTION: Find every unique permission key
+        const allKeys = new Set<string>()
+        data.forEach(role => {
+          if (role.permissions) {
+            Object.keys(role.permissions).forEach(key => allKeys.add(key))
+          }
+        })
+        
+        const formattedPerms = Array.from(allKeys).map(key => ({
+          key: key,
+          label: key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+        }))
+        setDynamicPermissions(formattedPerms)
+
         if (data.length > 0) {
           setSelectedRole(data[0])
           setPermissions(data[0].permissions || {})
         }
       }
-      setIsLoading(false)
+      setIsLoading(false) // Turn off loading after fetch
     }
     
-    // Only fetch if they have permission to be here
-    if (!authLoading && hasPermission('manage_roles')) {
+    if (authLoading) return; // Wait for auth to finish checking
+
+    if (hasPermission('manage_roles')) {
       fetchRoles()
+    } else {
+      setIsLoading(false) // Kick out of loading to show the Access Denied screen!
     }
   }, [supabase, authLoading, hasPermission])
 
@@ -90,7 +98,6 @@ export default function RolesManagementPage() {
     if (error) {
       alert("Failed to update role: " + error.message)
     } else {
-      // Update our local state so the UI reflects the save without reloading
       setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions } : r))
       alert(`Permissions for ${selectedRole.name} have been securely updated!`)
     }
@@ -114,8 +121,27 @@ export default function RolesManagementPage() {
     } else if (data) {
       setRoles([...roles, data].sort((a, b) => a.name.localeCompare(b.name)))
       setNewRoleName("")
-      handleSelectRole(data) // Instantly switch to the new role so they can configure it
+      handleSelectRole(data)
     }
+  }
+
+  // --- LOGIC: Add a Brand New Permission Key to the UI ---
+  const handleAddNewPermissionKey = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newPermKey.trim()) return;
+    
+    // Format what the user types (e.g., "View Reports" -> "view_reports")
+    const formattedKey = newPermKey.trim().toLowerCase().replace(/\s+/g, '_');
+    
+    // Check if it already exists
+    if (!dynamicPermissions.find(p => p.key === formattedKey)) {
+      setDynamicPermissions([...dynamicPermissions, {
+        key: formattedKey,
+        label: formattedKey.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+      }]);
+    }
+    
+    setNewPermKey("");
   }
 
   return (
@@ -159,7 +185,7 @@ export default function RolesManagementPage() {
               <div>
                 <h4 className={`font-black ${selectedRole?.id === role.id ? 'text-blue-900' : 'text-slate-700'}`}>{role.name}</h4>
                 <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
-                  {Object.keys(role.permissions || {}).length} Toggles Active
+                  {Object.values(role.permissions || {}).filter(val => val === true).length} Toggles Active
                 </p>
               </div>
             </button>
@@ -168,47 +194,65 @@ export default function RolesManagementPage() {
 
         {/* RIGHT COLUMN: Toggles Configuration */}
         {selectedRole && (
-          <div className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-            
-            <div className="p-6 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><Key className="w-5 h-5 text-blue-600"/> Configuring: {selectedRole.name}</h2>
-                <p className="text-sm text-slate-500 font-medium mt-1">Changes made here apply instantly next time the user logs in.</p>
-              </div>
+          <div className="lg:col-span-3 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
               
-              <button 
-                onClick={handleSavePermissions} 
-                disabled={isSaving}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl shadow-md font-black flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
-              >
-                {isSaving ? <Loader2 className="w-5 h-5 animate-spin"/> : <Save className="w-5 h-5"/>} Save Permissions
-              </button>
-            </div>
-
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-              {AVAILABLE_PERMISSIONS.map((feature) => {
-                const isEnabled = !!permissions[feature.key];
+              <div className="p-6 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><Key className="w-5 h-5 text-blue-600"/> Configuring: {selectedRole.name}</h2>
+                  <p className="text-sm text-slate-500 font-medium mt-1">Changes made here apply instantly next time the user logs in.</p>
+                </div>
                 
-                return (
-                  <div 
-                    key={feature.key} 
-                    onClick={() => togglePermission(feature.key)}
-                    className={`flex items-start justify-between gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${isEnabled ? 'border-green-500 bg-green-50/30' : 'border-slate-200 hover:border-slate-300'}`}
-                  >
-                    <div>
-                      <h4 className={`font-black text-sm ${isEnabled ? 'text-green-900' : 'text-slate-700'}`}>{feature.label}</h4>
-                      <p className={`text-xs mt-1.5 font-medium leading-relaxed ${isEnabled ? 'text-green-700/80' : 'text-slate-500'}`}>{feature.description}</p>
+                <button 
+                  onClick={handleSavePermissions} 
+                  disabled={isSaving}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl shadow-md font-black flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                >
+                  {isSaving ? <Loader2 className="w-5 h-5 animate-spin"/> : <Save className="w-5 h-5"/>} Save Permissions
+                </button>
+              </div>
+
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                {dynamicPermissions.map((feature) => {
+                  const isEnabled = !!permissions[feature.key];
+                  
+                  return (
+                    <div 
+                      key={feature.key} 
+                      onClick={() => togglePermission(feature.key)}
+                      className={`flex items-start justify-between gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${isEnabled ? 'border-green-500 bg-green-50/30' : 'border-slate-200 hover:border-slate-300'}`}
+                    >
+                      <div>
+                        <h4 className={`font-black text-sm ${isEnabled ? 'text-green-900' : 'text-slate-700'}`}>{feature.label}</h4>
+                        <p className={`text-[10px] font-mono mt-1 ${isEnabled ? 'text-green-700/80' : 'text-slate-400'}`}>{feature.key}</p>
+                      </div>
+                      
+                      <div className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 ease-in-out ${isEnabled ? 'bg-green-500' : 'bg-slate-300'}`}>
+                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300 ease-in-out ${isEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                      </div>
                     </div>
-                    
-                    {/* CUSTOM TOGGLE SWITCH UI */}
-                    <div className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 ease-in-out ${isEnabled ? 'bg-green-500' : 'bg-slate-300'}`}>
-                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300 ease-in-out ${isEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
-                    </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
 
+            {/* DYNAMIC FEATURE ADDER */}
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+               <div>
+                  <h3 className="font-bold text-slate-800">Need a new permission toggle?</h3>
+                  <p className="text-xs text-slate-500">Create a new key (e.g., "Export Reports") to add it to the board.</p>
+               </div>
+               <form onSubmit={handleAddNewPermissionKey} className="flex gap-2 w-full md:w-auto">
+                 <input 
+                    type="text" 
+                    value={newPermKey}
+                    onChange={(e) => setNewPermKey(e.target.value)}
+                    placeholder="New feature name..." 
+                    className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
+                 />
+                 <button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold shadow whitespace-nowrap">Add Toggle</button>
+               </form>
+            </div>
           </div>
         )}
 

@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard, Package, ShoppingCart, Users, ArrowRightLeft,
   Menu, X, Box, ChevronDown, ChevronRight,
-  FolderOpen, Loader2, ImageIcon, Tag, CreditCard, Truck, Bell
+  FolderOpen, Loader2, ImageIcon, Tag, CreditCard, Truck, Bell, Receipt, Settings
 } from "lucide-react";
 import LogoutButton from "@/components/ui/LogoutButton"
 import { AuthProvider, useAuth } from "@/context/AuthContext"
@@ -79,14 +79,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = createClient();
+const supabase = createClient();
 
-  const { canViewDashboard, isCategoryAllowed } = usePermissions()
+  // We bring in useAuth to use the hasPermission function safely!
+  const { hasPermission } = useAuth();
+  const { canViewDashboard, isCategoryAllowed } = usePermissions();
 
-  // Redirect employees away from /dashboard — their landing page is /orders
+  // Redirect employees away from /dashboard — their landing page is /cash-memo/
   useEffect(() => {
     if (pathname === "/dashboard" && !canViewDashboard) {
-      router.replace("/orders")
+      router.replace("/cash-memo")
     }
   }, [pathname, canViewDashboard, router])
 
@@ -110,16 +112,24 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     isCategoryAllowed(category.name)
   )
 
-  // Dashboard only shown if user has view_dashboard permission
+  // Use the safe hasPermission function to check roles
+  const canViewOrders = hasPermission('view_orders');
+  const canViewDispatch = hasPermission('view_dispatch');
+  const canManageRoles = hasPermission('manage_roles');
+
+  // Strict mapping
   const topNavItems = [
     ...(canViewDashboard ? [{ name: "Dashboard",        href: "/dashboard", icon: LayoutDashboard }] : []),
-    { name: "Orders",           href: "/orders",    icon: ShoppingCart    },
-    { name: "Dispatch Register",href: "/dispatch",  icon: Truck           },
+    { name: "Cash Memo",        href: "/cash-memo", icon: Receipt },
+    ...(canViewOrders   ? [{ name: "Orders",           href: "/orders",    icon: ShoppingCart }] : []),
+    ...(canViewDispatch ? [{ name: "Dispatch Register",href: "/dispatch",  icon: Truck }] : []),
     { name: "Payments",         href: "/payments",  icon: CreditCard      },
     { name: "Customers",        href: "/customers", icon: Users           },
     { name: "Inventory",        href: "/inventory", icon: Package         },
     { name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  },
     { name: "Product Gallery",  href: "/gallery",   icon: ImageIcon       },
+    // Gate the Roles page!
+    ...(canManageRoles  ? [{ name: "Roles",            href: "/settings/roles", icon: Settings }] : []),
   ]
 
   const isProductsActive = pathname.includes("/products");
@@ -289,6 +299,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 function BreadcrumbTitle({ pathname }: { pathname: string }) {
   const routeNames: Record<string, string> = {
     "/dashboard": "Dashboard",
+    "/cash-memo": "Cash Memo",
     "/orders":    "Orders",
     "/dispatch":  "Dispatch Register",
     "/payments":  "Payments",
@@ -296,14 +307,19 @@ function BreadcrumbTitle({ pathname }: { pathname: string }) {
     "/inventory": "Inventory",
     "/transfers": "Stock Transfers",
     "/gallery":   "Product Gallery",
+    "/settings/roles":  "Roles",
   }
   const matched = Object.entries(routeNames).find(([href]) =>
     href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href)
   )
   if (!matched) return null
+
+  // Ensure this respects the active environment context
+  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "ERP Prime";
+
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="text-slate-400 font-medium">PrintPack ERP</span>
+      <span className="text-slate-400 font-medium">{companyName}</span>
       <span className="text-slate-300">/</span>
       <span className="font-bold text-slate-700">{matched[1]}</span>
     </div>
