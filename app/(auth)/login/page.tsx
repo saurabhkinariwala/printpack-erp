@@ -23,9 +23,12 @@ export default function LoginPage() {
     // THE SMART TRICK: Handle both short usernames AND full emails
     let loginEmail = username.trim().toLowerCase();
     
-    // If they didn't type an '@', automatically attach your company domain
+    // Dynamically pull the domain from Vercel, fallback to printpack.com just in case
+    const authDomain = process.env.NEXT_PUBLIC_AUTH_DOMAIN || "printpack.com";
+
+    // If they didn't type an '@', automatically attach the correct company domain
     if (!loginEmail.includes('@')) {
-      loginEmail = `${loginEmail}@printpack.com`;
+      loginEmail = `${loginEmail}@${authDomain}`;
     }
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
@@ -46,6 +49,9 @@ export default function LoginPage() {
     }
   }
 
+  // Dynamically pull the company name for the logo header
+  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "ERP SYSTEM";
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
@@ -54,7 +60,10 @@ export default function LoginPage() {
           <div className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
             <Lock className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-wide">ERP SYSTEM</h1>
+          {/* Dynamic Company Header */}
+          <h1 className="text-2xl font-black text-white tracking-wide uppercase">
+            {companyName}
+          </h1>
           <p className="text-slate-400 text-sm mt-2">Secure Employee Portal</p>
         </div>
 
