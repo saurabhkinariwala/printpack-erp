@@ -99,6 +99,7 @@ const fetchHistory = useCallback(async () => {
         to_location:locations!to_location_id(name),
         items(name, sku)
       `)
+      .eq("transaction_type", "transfer")
       .gte("created_at", startDate + "T00:00:00")
       .lte("created_at", endDate + "T23:59:59")
       .order("created_at", { ascending: false })
