@@ -16,11 +16,16 @@ type Item = {
 type TransferLine = { item_id: string; name: string; sku: string; pack_size: number; qty: string; available: number }
 
 type TransferRecord = {
-  id: string; created_at: string; transaction_type: string
-  quantity: number; vehicle_number: string | null; notes: string | null
-  from_location: { name: string } | null
-  to_location: { name: string } | null
-  items: { name: string; sku: string } | null
+  id: string;
+  created_at: string;
+  transaction_type: string;
+  quantity: number;
+  vehicle_number: string | null;
+  notes: string | null;
+  reference_id?: string | null;
+  from_location: { name: string } | null;
+  to_location: { name: string } | null;
+  items: { name: string; sku: string } | null;
 }
 
 export default function TransfersPage() {
@@ -82,23 +87,28 @@ export default function TransfersPage() {
   }, [supabase])
 
   // ── Fetch transfer history ──
-  const fetchHistory = useCallback(async () => {
+const fetchHistory = useCallback(async () => {
     setHistoryLoading(true)
-    const { data } = await supabase
+    
+    const { data, error } = await supabase
       .from("stock_ledger")
       .select(`
         id, created_at, transaction_type, quantity,
-        vehicle_number, notes,
-        from_location:from_location_id(name),
-        to_location:to_location_id(name),
-        items:item_id(name, sku)
+        vehicle_number, notes, reference_id,
+        from_location:locations!from_location_id(name),
+        to_location:locations!to_location_id(name),
+        items(name, sku)
       `)
-      .eq("transaction_type", "transfer")
       .gte("created_at", startDate + "T00:00:00")
       .lte("created_at", endDate + "T23:59:59")
       .order("created_at", { ascending: false })
 
-    if (data) setHistory(data as unknown as TransferRecord[])
+    if (error) {
+      console.error("Database Join Error:", error.message)
+    } else if (data) {
+      setHistory(data as unknown as TransferRecord[])
+    }
+    
     setHistoryLoading(false)
   }, [startDate, endDate, supabase])
 
@@ -124,6 +134,7 @@ export default function TransfersPage() {
   const removeLine = (item_id: string) => setLines(lines.filter(l => l.item_id !== item_id))
   const updateQty = (item_id: string, qty: string) => setLines(lines.map(l => l.item_id === item_id ? { ...l, qty } : l))
 
+  // ── Save transfer ──
   // ── Save transfer ──
   const handleSave = async () => {
     setFormError(null)
@@ -164,8 +175,8 @@ export default function TransfersPage() {
       )
       if (e2) { setFormError("Stock update failed: " + e2.message); setIsSaving(false); return }
 
-      // Record in ledger
-      await supabase.from("stock_ledger").insert({
+      // Record in ledger (NOW WITH EXPLICIT ERROR CHECKING!)
+      const { error: ledgerError } = await supabase.from("stock_ledger").insert({
         item_id: l.item_id,
         from_location_id: fromLocation,
         to_location_id: toLocation,
@@ -175,6 +186,13 @@ export default function TransfersPage() {
         notes: transferNote.trim() || null,
         created_at: new Date(transferDate).toISOString(),
       })
+
+      if (ledgerError) {
+        console.error("Ledger Insert Error:", ledgerError)
+        setFormError("History record failed to save: " + ledgerError.message)
+        setIsSaving(false)
+        return
+      }
     }
 
     await fetchData()
@@ -266,19 +284,21 @@ export default function TransfersPage() {
       {/* ── Transfer History Table ── */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="font-bold text-slate-800 text-sm">Transfer History</h3>
+          <h3 className="font-bold text-slate-800 text-sm">Stock Ledger</h3>
           <span className="text-xs text-slate-400">{filteredHistory.length} records</span>
         </div>
         {historyLoading ? (
           <div className="py-16 text-center text-slate-400 text-sm">Loading history…</div>
         ) : filteredHistory.length === 0 ? (
-          <div className="py-16 text-center text-slate-400 text-sm">No transfers found in this period</div>
+          <div className="py-16 text-center text-slate-400 text-sm">No ledger records found in this period</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-100">
                 <tr>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Date</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Type</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Reference</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Product</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Route</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Vehicle</th>
@@ -290,6 +310,8 @@ export default function TransfersPage() {
                 {filteredHistory.map(h => (
                   <tr key={h.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3.5 text-slate-500 text-xs whitespace-nowrap">{fmtDate(h.created_at)}</td>
+                    <td className="px-5 py-3.5 text-xs font-semibold text-slate-700 uppercase tracking-wide">{h.transaction_type}</td>
+                    <td className="px-5 py-3.5 text-xs text-slate-500">{h.reference_id || "—"}</td>
                     <td className="px-5 py-3.5">
                       <p className="font-semibold text-slate-800">{(h.items as any)?.name || "—"}</p>
                       <p className="text-[10px] text-slate-400 font-mono">{(h.items as any)?.sku}</p>
