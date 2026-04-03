@@ -26,6 +26,8 @@ const KEYS = {
   editProducts:  "edit_products",    // Can edit items in the products pages
   editOrders:    "edit_orders",      // Can edit existing orders
   deleteOrders:  "delete_orders",    // Can delete orders
+  editCashMemos: "edit_cash_memos",  // Can edit existing cash memos
+  deleteCashMemos: "delete_cash_memos", // Can delete cash memos
   editDispatch:  "edit_dispatch",    // Can create/manage dispatch notes
   manageRoles:   "manage_roles",     // Super admin — can open the Roles settings page
 } as const
@@ -50,6 +52,8 @@ export function usePermissions() {
   const canEditProducts  = hasPermission(KEYS.editProducts)
   const canEditOrders    = hasPermission(KEYS.editOrders)
   const canDeleteOrders  = hasPermission(KEYS.deleteOrders)
+  const canEditCashMemos = hasPermission(KEYS.editCashMemos)
+  const canDeleteCashMemos = hasPermission(KEYS.deleteCashMemos)
   const canEditDispatch  = hasPermission(KEYS.editDispatch)
   const canManageRoles   = hasPermission(KEYS.manageRoles)
 
@@ -73,6 +77,8 @@ export function usePermissions() {
     canEditProducts,
     canEditOrders,
     canDeleteOrders,
+    canEditCashMemos,
+    canDeleteCashMemos,
     canEditDispatch,
     canManageRoles,
     isCategoryAllowed,

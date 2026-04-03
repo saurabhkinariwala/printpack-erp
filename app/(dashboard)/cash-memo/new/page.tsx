@@ -117,7 +117,7 @@ export default function CashMemoPage() {
       customer: { name: customerName || "Walk-in Customer", mobile: customerMobile },
       memo: { memo_date: memoDate, is_gst_applied: isGstApplied, discount_value: discountAmount.toString(), total_amount: grandTotal },
       items: cart.map(item => ({ id: item.id, quantity: item.cart_qty, price: item.price, gst_rate: item.gst_rate })),
-      payments: payments.filter(p => Number(p.amount) > 0).map(p => ({ amount: Number(p.amount), payment_mode: p.mode }))
+      payments: payments.filter(p => Number(p.amount) > 0).map(p => ({ amount: Number(p.amount), payment_mode: p.mode, payment_date: memoDate }))
     }
 
     const { error } = await supabase.rpc('create_cash_memo_atomic', { payload })

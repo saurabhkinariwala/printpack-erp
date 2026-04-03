@@ -5,6 +5,20 @@ import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/context/AuthContext"
 import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users } from "lucide-react"
 
+// Import the permission keys from usePermissions
+const PERMISSION_KEYS = {
+  view_dashboard: "View Dashboard",
+  access_bakery: "Access Bakery Products",
+  access_giftbox: "Access Gift Box Products",
+  edit_products: "Edit Products",
+  edit_orders: "Edit Orders",
+  delete_orders: "Delete Orders",
+  edit_cash_memos: "Edit Cash Memos",
+  delete_cash_memos: "Delete Cash Memos",
+  edit_dispatch: "Edit Dispatch",
+  manage_roles: "Manage Roles",
+} as const
+
 export default function RolesManagementPage() {
   const supabase = createClient()
   const { hasPermission, isLoading: authLoading } = useAuth()
@@ -13,9 +27,11 @@ export default function RolesManagementPage() {
   const [selectedRole, setSelectedRole] = useState<any>(null)
   const [permissions, setPermissions] = useState<Record<string, boolean>>({})
   
-  // NEW: Dynamic permissions array extracted from the DB
-  const [dynamicPermissions, setDynamicPermissions] = useState<{key: string, label: string}[]>([])
-  const [newPermKey, setNewPermKey] = useState("")
+  // Use static permissions from the KEYS object
+  const staticPermissions = Object.entries(PERMISSION_KEYS).map(([key, label]) => ({
+    key,
+    label
+  }))
   
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -27,20 +43,6 @@ useEffect(() => {
       if (data) {
         setRoles(data)
         
-        // DYNAMIC EXTRACTION: Find every unique permission key
-        const allKeys = new Set<string>()
-        data.forEach(role => {
-          if (role.permissions) {
-            Object.keys(role.permissions).forEach(key => allKeys.add(key))
-          }
-        })
-        
-        const formattedPerms = Array.from(allKeys).map(key => ({
-          key: key,
-          label: key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
-        }))
-        setDynamicPermissions(formattedPerms)
-
         if (data.length > 0) {
           setSelectedRole(data[0])
           setPermissions(data[0].permissions || {})
@@ -125,25 +127,6 @@ useEffect(() => {
     }
   }
 
-  // --- LOGIC: Add a Brand New Permission Key to the UI ---
-  const handleAddNewPermissionKey = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newPermKey.trim()) return;
-    
-    // Format what the user types (e.g., "View Reports" -> "view_reports")
-    const formattedKey = newPermKey.trim().toLowerCase().replace(/\s+/g, '_');
-    
-    // Check if it already exists
-    if (!dynamicPermissions.find(p => p.key === formattedKey)) {
-      setDynamicPermissions([...dynamicPermissions, {
-        key: formattedKey,
-        label: formattedKey.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
-      }]);
-    }
-    
-    setNewPermKey("");
-  }
-
   return (
     <div className="max-w-6xl mx-auto flex flex-col gap-6 pb-20">
       
@@ -213,7 +196,7 @@ useEffect(() => {
               </div>
 
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                {dynamicPermissions.map((feature) => {
+                {staticPermissions.map((feature) => {
                   const isEnabled = !!permissions[feature.key];
                   
                   return (
@@ -234,24 +217,6 @@ useEffect(() => {
                   )
                 })}
               </div>
-            </div>
-
-            {/* DYNAMIC FEATURE ADDER */}
-            <div className="bg-slate-50 rounded-xl border border-slate-200 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-               <div>
-                  <h3 className="font-bold text-slate-800">Need a new permission toggle?</h3>
-                  <p className="text-xs text-slate-500">Create a new key (e.g., "Export Reports") to add it to the board.</p>
-               </div>
-               <form onSubmit={handleAddNewPermissionKey} className="flex gap-2 w-full md:w-auto">
-                 <input 
-                    type="text" 
-                    value={newPermKey}
-                    onChange={(e) => setNewPermKey(e.target.value)}
-                    placeholder="New feature name..." 
-                    className="flex-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
-                 />
-                 <button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold shadow whitespace-nowrap">Add Toggle</button>
-               </form>
             </div>
           </div>
         )}
