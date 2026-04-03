@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, X, Loader2, MapPin, Package, Filter, Save } from "lucide-react"
+import { Search, Plus, X, Loader2, MapPin, Package, Filter, Save, History } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
+import Link from "next/link"
 
 type Location = { id: string; name: string; type: string }
 type StockRow = {
@@ -171,10 +172,15 @@ export default function InventoryPage() {
           <h2 className="text-2xl font-bold text-slate-800">Inventory</h2>
           <p className="text-sm text-slate-500 mt-0.5">Live stock across all locations · Add manufactured stock</p>
         </div>
-        <button onClick={fetchData}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-50 shadow-sm">
-          <Package className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <Link href="/inventory/ledger" className="flex items-center gap-2 px-4 py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 rounded-lg text-sm font-bold shadow-sm transition-colors">
+            <History className="h-4 w-4" /> View Item Ledger
+          </Link>
+          <button onClick={fetchData}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-50 shadow-sm">
+            <Package className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* ── Location tabs (summary cards that also act as filters) ── */}

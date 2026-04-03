@@ -22,6 +22,7 @@ type CartItem = CatalogItem & {
 type PaymentSplit = {
   mode: string
   amount: string
+  date: string
 }
 
 export default function CashMemoPage() {
@@ -41,10 +42,9 @@ export default function CashMemoPage() {
   const [cart, setCart] = useState<CartItem[]>([])
   const [isGstApplied, setIsGstApplied] = useState(false)
   const [discountAmount, setDiscountAmount] = useState<number>(0)
+  const todayDate = new Date().toISOString().split('T')[0];
+  const [payments, setPayments] = useState<PaymentSplit[]>([{ mode: "Cash", amount: "", date: todayDate }])
   
-  // Fix #5: Dynamic Split Payments array
-  const [payments, setPayments] = useState<PaymentSplit[]>([{ mode: "Cash", amount: "" }])
-
   useEffect(() => {
     async function fetchInventory() {
       const { data: locData } = await supabase.from('locations').select('id').ilike('name', '%Office%').limit(1).single();
@@ -91,14 +91,14 @@ export default function CashMemoPage() {
   }
 
   // Payment Handlers
-  const addPaymentSplit = () => setPayments([...payments, { mode: "UPI", amount: "" }])
-  const updatePayment = (index: number, field: "mode" | "amount", value: string) => {
+  const addPaymentSplit = () => setPayments([...payments, { mode: "UPI", amount: "", date: todayDate }])
+  const updatePayment = (index: number, field: "mode" | "amount" | "date", value: string) => {
     const newPayments = [...payments]
     newPayments[index][field] = value
     setPayments(newPayments)
   }
   const removePayment = (index: number) => setPayments(payments.filter((_, i) => i !== index))
-
+ 
   // --- MATH FIXES (#2) ---
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.cart_qty), 0)
   const gstTotal = isGstApplied ? cart.reduce((sum, item) => sum + ((item.price * item.cart_qty * item.gst_rate) / 100), 0) : 0
@@ -117,7 +117,7 @@ export default function CashMemoPage() {
       customer: { name: customerName || "Walk-in Customer", mobile: customerMobile },
       memo: { memo_date: memoDate, is_gst_applied: isGstApplied, discount_value: discountAmount.toString(), total_amount: grandTotal },
       items: cart.map(item => ({ id: item.id, quantity: item.cart_qty, price: item.price, gst_rate: item.gst_rate })),
-      payments: payments.filter(p => Number(p.amount) > 0).map(p => ({ amount: Number(p.amount), payment_mode: p.mode, payment_date: memoDate }))
+      payments: payments.filter(p => Number(p.amount) > 0).map(p => ({ amount: Number(p.amount), payment_mode: p.mode, payment_date: p.date }))
     }
 
     const { error } = await supabase.rpc('create_cash_memo_atomic', { payload })
@@ -249,17 +249,22 @@ export default function CashMemoPage() {
             
             {/* Fix #5: Dynamic Payment Rows */}
             {payments.map((payment, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <select value={payment.mode} onChange={(e) => updatePayment(index, "mode", e.target.value)} className="w-1/3 bg-slate-50 border border-slate-200 text-sm font-bold text-slate-700 rounded-lg p-2 outline-none focus:border-blue-500">
-                  <option value="Cash">Cash</option><option value="UPI">UPI</option><option value="Bank">Bank</option>
-                </select>
-                <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 focus-within:border-blue-500">
-                  <IndianRupee className="w-4 h-4 text-slate-400"/>
-                  <input type="number" placeholder="Amount" value={payment.amount} onChange={(e) => updatePayment(index, "amount", e.target.value)} className="w-full bg-transparent outline-none text-sm font-black text-slate-800"/>
+              <div key={index} className="flex flex-col gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <select value={payment.mode} onChange={(e) => updatePayment(index, "mode", e.target.value)} className="w-1/2 bg-white border border-slate-200 text-sm font-bold text-slate-700 rounded-lg p-2 outline-none focus:border-blue-500">
+                    <option value="Cash">Cash</option><option value="UPI">UPI</option><option value="Bank">Bank</option>
+                  </select>
+                  <input type="date" value={payment.date} onChange={(e) => updatePayment(index, "date", e.target.value)} className="w-1/2 bg-white border border-slate-200 text-sm font-bold text-slate-700 rounded-lg p-2 outline-none focus:border-blue-500" />
                 </div>
-                {payments.length > 1 && (
-                  <button onClick={() => removePayment(index)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4"/></button>
-                )}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 focus-within:border-blue-500">
+                    <IndianRupee className="w-4 h-4 text-slate-400"/>
+                    <input type="number" placeholder="Amount" value={payment.amount} onChange={(e) => updatePayment(index, "amount", e.target.value)} className="w-full bg-transparent outline-none text-sm font-black text-slate-800"/>
+                  </div>
+                  {payments.length > 1 && (
+                    <button onClick={() => removePayment(index)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
+                  )}
+                </div>
               </div>
             ))}
 
