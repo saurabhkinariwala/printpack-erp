@@ -9,7 +9,7 @@ import {
 } from "recharts"
 import {
   TrendingUp, ShoppingCart, CreditCard, AlertTriangle, Plus,
-  Download, Calendar, RefreshCw, Package, Users, ArrowUpRight, X, Printer
+  Download, Calendar, RefreshCw, Package, Users, ArrowUpRight, X, Printer, Receipt
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ type SalesPeriod = { label: string; total: number }
 type TopProduct = { name: string; sku: string; qty: number; revenue: number; category: string }
 type LowStockItem = { name: string; sku: string; quantity: number; threshold: number; category: string }
 type DayBookEntry = {
-  order_number: string; order_id: string; customer_name: string;
+  document_number: string; document_id: string; customer_name: string;
   items: { name: string; qty: number; unit_price: number }[];
   total_amount: number; payments_on_day: number
 }
@@ -32,6 +32,9 @@ export default function DashboardPage() {
   const router = useRouter()
   const supabase = createClient()
 
+  // ⚡ THE VIEW TOGGLE
+  const [activeView, setActiveView] = useState<"Orders" | "Cash Memos">("Orders")
+
   // date range - default: first of current month to today
   const today = new Date().toISOString().split("T")[0]
   const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]
@@ -42,7 +45,7 @@ export default function DashboardPage() {
 
   // KPIs
   const [totalRevenue, setTotalRevenue] = useState(0)
-  const [totalOrders, setTotalOrders] = useState(0)
+  const [totalTransactions, setTotalTransactions] = useState(0)
   const [totalCollected, setTotalCollected] = useState(0)
   const [totalPending, setTotalPending] = useState(0)
 
@@ -65,110 +68,126 @@ export default function DashboardPage() {
     setIsLoading(true)
     const endDateInclusive = endDate + "T23:59:59"
 
-    // 1. Orders in range
-    const { data: ordersData } = await supabase
-      .from("orders")
-      .select(`
-        id, total_amount, order_date, status,
-        customers(name),
-        order_items(
-          quantity_ordered, unit_price,
-          items(name, sku, sub_categories(name, categories(name)))
-        ),
-        payments(amount, payment_date)
-      `)
-      .gte("order_date", startDate)
-      .lte("order_date", endDate)
-      .order("order_date", { ascending: true })
+    let rev = 0, collected = 0, transactionCount = 0
+    const trendMap: Record<string, number> = {}
+    const productMap: Record<string, { qty: number; revenue: number; name: string; sku: string; category: string }> = {}
 
-    if (!ordersData) { setIsLoading(false); return }
+    const diffDays = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
 
-    // ── KPIs ──
-    let rev = 0, collected = 0
-    ordersData.forEach(o => {
-      rev += Number(o.total_amount) || 0
-      o.payments?.forEach((p: any) => { collected += Number(p.amount) || 0 })
-    })
+    if (activeView === "Orders") {
+      // ── FETCH ORDERS ──
+      const { data: ordersData } = await supabase
+        .from("orders")
+        .select(`
+          id, total_amount, order_date, status,
+          customers(name),
+          order_items(quantity_ordered, unit_price, items(name, sku, sub_categories(name, categories(name)))),
+          payments(amount, payment_date)
+        `)
+        .gte("order_date", startDate)
+        .lte("order_date", endDate)
+        .order("order_date", { ascending: true })
+
+      if (ordersData) {
+        transactionCount = ordersData.length
+        ordersData.forEach(o => {
+          rev += Number(o.total_amount) || 0
+          o.payments?.forEach((p: any) => { collected += Number(p.amount) || 0 })
+
+          // Trend
+          let key: string
+          const d = new Date(o.order_date)
+          if (diffDays <= 31) key = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+          else if (diffDays <= 90) key = d.toLocaleDateString("en-IN", { month: "short" }) + " W" + Math.ceil(d.getDate() / 7)
+          else key = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+          
+          trendMap[key] = (trendMap[key] || 0) + (Number(o.total_amount) || 0)
+
+          // Products
+          o.order_items?.forEach((oi: any) => {
+            const item = oi.items
+            if (!item) return
+            const catName = item.sub_categories?.categories?.name || "Other"
+            if (!productMap[item.sku]) productMap[item.sku] = { name: item.name, sku: item.sku, qty: 0, revenue: 0, category: catName }
+            productMap[item.sku].qty += oi.quantity_ordered || 0
+            productMap[item.sku].revenue += (oi.quantity_ordered || 0) * (Number(oi.unit_price) || 0)
+          })
+        })
+      }
+    } else {
+      // ── FETCH CASH MEMOS ──
+      const { data: memoData } = await supabase
+        .from("cash_memos")
+        .select(`
+          id, total_amount, memo_date, customer_name,
+          cash_memo_items(quantity, unit_price, items(name, sku, sub_categories(name, categories(name)))),
+          payments(amount, payment_date)
+        `)
+        .gte("memo_date", startDate)
+        .lte("memo_date", endDate)
+        .order("memo_date", { ascending: true })
+
+      if (memoData) {
+        transactionCount = memoData.length
+        memoData.forEach(m => {
+          rev += Number(m.total_amount) || 0
+          m.payments?.forEach((p: any) => { collected += Number(p.amount) || 0 })
+
+          // Trend
+          let key: string
+          const d = new Date(m.memo_date)
+          if (diffDays <= 31) key = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+          else if (diffDays <= 90) key = d.toLocaleDateString("en-IN", { month: "short" }) + " W" + Math.ceil(d.getDate() / 7)
+          else key = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+          
+          trendMap[key] = (trendMap[key] || 0) + (Number(m.total_amount) || 0)
+
+          // Products
+          m.cash_memo_items?.forEach((cmi: any) => {
+            const item = cmi.items
+            if (!item) return
+            const catName = item.sub_categories?.categories?.name || "Other"
+            if (!productMap[item.sku]) productMap[item.sku] = { name: item.name, sku: item.sku, qty: 0, revenue: 0, category: catName }
+            productMap[item.sku].qty += cmi.quantity || 0
+            productMap[item.sku].revenue += (cmi.quantity || 0) * (Number(cmi.unit_price) || 0)
+          })
+        })
+      }
+    }
+
+    // Set KPIs & Charts
     setTotalRevenue(rev)
     setTotalCollected(collected)
     setTotalPending(rev - collected)
-    setTotalOrders(ordersData.length)
-
-    // ── Sales Trend (day/week/month based on range) ──
-    const diffDays = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
-    const trendMap: Record<string, number> = {}
-
-    ordersData.forEach(o => {
-      let key: string
-      const d = new Date(o.order_date)
-      if (diffDays <= 31) {
-        key = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
-      } else if (diffDays <= 90) {
-        // group by week
-        const weekNum = Math.ceil(d.getDate() / 7)
-        key = d.toLocaleDateString("en-IN", { month: "short" }) + " W" + weekNum
-      } else {
-        key = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
-      }
-      trendMap[key] = (trendMap[key] || 0) + (Number(o.total_amount) || 0)
-    })
-
+    setTotalTransactions(transactionCount)
     setSalesTrend(Object.entries(trendMap).map(([label, total]) => ({ label, total })))
-
-    // ── Top 10 products per category ──
-    const productMap: Record<string, { qty: number; revenue: number; name: string; sku: string; category: string }> = {}
-
-    ordersData.forEach(o => {
-      o.order_items?.forEach((oi: any) => {
-        const item = oi.items
-        if (!item) return
-        const catName = item.sub_categories?.categories?.name || "Other"
-        const key = item.sku
-        if (!productMap[key]) {
-          productMap[key] = { name: item.name, sku: item.sku, qty: 0, revenue: 0, category: catName }
-        }
-        productMap[key].qty += oi.quantity_ordered || 0
-        productMap[key].revenue += (oi.quantity_ordered || 0) * (Number(oi.unit_price) || 0)
-      })
-    })
 
     const allProducts = Object.values(productMap).sort((a, b) => b.qty - a.qty)
     setTopBakery(allProducts.filter(p => p.category.toLowerCase().includes("bak")).slice(0, 10))
     setTopGiftBoxes(allProducts.filter(p => p.category.toLowerCase().includes("gift")).slice(0, 10))
 
-    // ── Low Stock ──
-    const { data: stockData } = await supabase
-      .from("stock")
-      .select(`
-        quantity, item_id,
-        items(name, sku, sub_categories(name, categories(name)))
-      `)
-
+    // ── Low Stock (Same for both views as it reflects physical inventory) ──
+    const { data: stockData } = await supabase.from("stock").select(`quantity, item_id, items(name, sku, sub_categories(name, categories(name)))`)
     const lowStock: LowStockItem[] = []
     if (stockData) {
-      // Aggregate qty per item
       const itemQtyMap: Record<string, { qty: number; name: string; sku: string; category: string }> = {}
       stockData.forEach((s: any) => {
         const item = s.items
         if (!item) return
         const catName = item.sub_categories?.categories?.name || ""
-        if (!itemQtyMap[s.item_id]) {
-          itemQtyMap[s.item_id] = { qty: 0, name: item.name, sku: item.sku, category: catName }
-        }
+        if (!itemQtyMap[s.item_id]) itemQtyMap[s.item_id] = { qty: 0, name: item.name, sku: item.sku, category: catName }
         itemQtyMap[s.item_id].qty += s.quantity || 0
       })
       Object.entries(itemQtyMap).forEach(([, v]) => {
         const isBakery = v.category.toLowerCase().includes("bak")
         const isGift = v.category.toLowerCase().includes("gift")
         const threshold = isBakery ? 400 : isGift ? 100 : null
-        if (threshold !== null && v.qty < threshold) {
-          lowStock.push({ name: v.name, sku: v.sku, quantity: v.qty, threshold, category: v.category })
-        }
+        if (threshold !== null && v.qty < threshold) lowStock.push({ name: v.name, sku: v.sku, quantity: v.qty, threshold, category: v.category })
       })
     }
     setLowStockItems(lowStock.sort((a, b) => a.quantity - b.quantity))
     setIsLoading(false)
-  }, [startDate, endDate, supabase])
+  }, [startDate, endDate, activeView, supabase])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -177,76 +196,90 @@ export default function DashboardPage() {
     setIsDayBookLoading(true)
     setIsDayBookOpen(true)
 
-    const { data } = await supabase
-      .from("orders")
-      .select(`
-        id, order_number, total_amount,
-        customers(name),
+    let entries: DayBookEntry[] = []
+
+    if (activeView === "Orders") {
+      const { data } = await supabase.from("orders").select(`
+        id, order_number, total_amount, customers(name),
         order_items(quantity_ordered, unit_price, items(name, sku)),
         payments(amount, payment_date)
-      `)
-      .eq("order_date", dayBookDate)
-      .order("order_number")
+      `).eq("order_date", dayBookDate).order("order_number")
 
-    if (data) {
-      const entries: DayBookEntry[] = data.map((o: any) => ({
-        order_id: o.id,
-        order_number: o.order_number,
-        customer_name: o.customers?.name || "Unknown",
-        items: o.order_items?.map((oi: any) => ({
-          name: oi.items?.name || "Unknown",
-          qty: oi.quantity_ordered,
-          unit_price: Number(oi.unit_price),
-        })) || [],
-        total_amount: Number(o.total_amount),
-        payments_on_day: o.payments
-          ?.filter((p: any) => p.payment_date?.startsWith(dayBookDate))
-          .reduce((s: number, p: any) => s + Number(p.amount), 0) || 0
-      }))
-      setDayBookData(entries)
+      if (data) {
+        entries = data.map((o: any) => ({
+          document_id: o.id, document_number: o.order_number,
+          customer_name: o.customers?.name || "Unknown",
+          items: o.order_items?.map((oi: any) => ({ name: oi.items?.name || "Unknown", qty: oi.quantity_ordered, unit_price: Number(oi.unit_price) })) || [],
+          total_amount: Number(o.total_amount),
+          payments_on_day: o.payments?.filter((p: any) => p.payment_date?.startsWith(dayBookDate)).reduce((s: number, p: any) => s + Number(p.amount), 0) || 0
+        }))
+      }
+    } else {
+      const { data } = await supabase.from("cash_memos").select(`
+        id, memo_number, total_amount, customer_name,
+        cash_memo_items(quantity, unit_price, items(name, sku)),
+        payments(amount, payment_date)
+      `).eq("memo_date", dayBookDate).order("memo_number")
+
+      if (data) {
+        entries = data.map((m: any) => ({
+          document_id: m.id, document_number: m.memo_number,
+          customer_name: m.customer_name || "Walk-in Customer",
+          items: m.cash_memo_items?.map((cmi: any) => ({ name: cmi.items?.name || "Unknown", qty: cmi.quantity, unit_price: Number(cmi.unit_price) })) || [],
+          total_amount: Number(m.total_amount),
+          payments_on_day: m.payments?.filter((p: any) => p.payment_date?.startsWith(dayBookDate)).reduce((s: number, p: any) => s + Number(p.amount), 0) || 0
+        }))
+      }
     }
+
+    setDayBookData(entries)
     setIsDayBookLoading(false)
   }
 
   // ─── Preset Range Buttons ─────────────────────────────────────────────────
   const setPreset = (preset: string) => {
     const now = new Date()
-    if (preset === "today") {
-      setStartDate(today); setEndDate(today)
-    } else if (preset === "week") {
-      const start = new Date(now); start.setDate(now.getDate() - 6)
-      setStartDate(start.toISOString().split("T")[0]); setEndDate(today)
-    } else if (preset === "month") {
-      setStartDate(firstOfMonth); setEndDate(today)
-    } else if (preset === "quarter") {
-      const start = new Date(now); start.setMonth(now.getMonth() - 3)
-      setStartDate(start.toISOString().split("T")[0]); setEndDate(today)
-    }
+    if (preset === "today") { setStartDate(today); setEndDate(today) } 
+    else if (preset === "week") { const start = new Date(now); start.setDate(now.getDate() - 6); setStartDate(start.toISOString().split("T")[0]); setEndDate(today) } 
+    else if (preset === "month") { setStartDate(firstOfMonth); setEndDate(today) } 
+    else if (preset === "quarter") { const start = new Date(now); start.setMonth(now.getMonth() - 3); setStartDate(start.toISOString().split("T")[0]); setEndDate(today) }
   }
 
   const kpis = [
     { label: "Total Revenue", value: fmt(totalRevenue), icon: TrendingUp, color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100" },
-    { label: "Total Orders", value: totalOrders.toString(), icon: ShoppingCart, color: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100" },
+    { label: activeView === "Orders" ? "Total Orders" : "Total Memos", value: totalTransactions.toString(), icon: activeView === "Orders" ? ShoppingCart : Receipt, color: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100" },
     { label: "Collected", value: fmt(totalCollected), icon: CreditCard, color: "text-green-600", bg: "bg-green-50", border: "border-green-100" },
     { label: "Pending Balance", value: fmt(totalPending), icon: ArrowUpRight, color: "text-orange-600", bg: "bg-orange-50", border: "border-orange-100" },
   ]
 
   return (
     <div className="flex flex-col gap-6 pb-12 print:pb-0 print:gap-0">
-
-      {/* Main dashboard content, hidden when printing the day book */}
       <div className={`flex flex-col gap-6 ${isDayBookOpen ? 'print:hidden' : ''}`}>
-        {/* ── Header ── */}
+        
+        {/* ── Header & View Toggle ── */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Dashboard</h2>
-            <p className="text-sm text-slate-500 mt-0.5">Live business intelligence · PrintPack ERP</p>
+            <p className="text-sm text-slate-500 mt-0.5">Live business intelligence</p>
           </div>
-          <button
-            onClick={() => router.push("/orders/new")}
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-md w-fit"
-          >
-            <Plus className="h-4 w-4" /> New Order
+          
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl shadow-inner border border-slate-200">
+            <button 
+              onClick={() => setActiveView("Orders")} 
+              className={`flex items-center gap-2 px-5 py-2 rounded-lg font-bold text-sm transition-all ${activeView === "Orders" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              <ShoppingCart className="w-4 h-4" /> Orders
+            </button>
+            <button 
+              onClick={() => setActiveView("Cash Memos")} 
+              className={`flex items-center gap-2 px-5 py-2 rounded-lg font-bold text-sm transition-all ${activeView === "Cash Memos" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              <Receipt className="w-4 h-4" /> Cash Memos
+            </button>
+          </div>
+          
+          <button onClick={() => activeView === "Orders" ? router.push("/orders/new") : router.push("/cash-memo/new")} className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-md w-full sm:w-fit">
+            <Plus className="h-4 w-4" /> New {activeView === "Orders" ? "Order" : "Memo"}
           </button>
         </div>
 
@@ -255,15 +288,9 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center gap-3">
             <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
             <div className="flex items-center gap-2">
-              <input
-                type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
-              />
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium" />
               <span className="text-slate-400 text-sm">to</span>
-              <input
-                type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium"
-              />
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 font-medium" />
             </div>
             <div className="flex gap-2 flex-wrap">
               {[["today","Today"],["week","Last 7 Days"],["month","This Month"],["quarter","Last 3 Months"]].map(([k,l]) => (
@@ -280,9 +307,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {kpis.map((k, i) => (
             <div key={i} className={`bg-white rounded-xl border ${k.border} shadow-sm p-5 flex items-center gap-4`}>
-              <div className={`h-12 w-12 rounded-xl ${k.bg} flex items-center justify-center shrink-0`}>
-                <k.icon className={`h-5 w-5 ${k.color}`} />
-              </div>
+              <div className={`h-12 w-12 rounded-xl ${k.bg} flex items-center justify-center shrink-0`}><k.icon className={`h-5 w-5 ${k.color}`} /></div>
               <div>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{k.label}</p>
                 <p className="text-xl font-black text-slate-800 mt-0.5">{isLoading ? "—" : k.value}</p>
@@ -294,7 +319,7 @@ export default function DashboardPage() {
         {/* ── Sales Trend ── */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-blue-500" /> Sales Trend
+            <TrendingUp className="h-4 w-4 text-blue-500" /> {activeView} Sales Trend
             <span className="text-xs font-normal text-slate-400 ml-2">
               {Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 31 ? "By Day" :
                Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) <= 90 ? "By Week" : "By Month"}
@@ -303,7 +328,7 @@ export default function DashboardPage() {
           {isLoading ? (
             <div className="h-60 flex items-center justify-center text-slate-400 text-sm">Loading chart...</div>
           ) : salesTrend.length === 0 ? (
-            <div className="h-60 flex items-center justify-center text-slate-400 text-sm">No orders in this period</div>
+            <div className="h-60 flex items-center justify-center text-slate-400 text-sm">No transactions in this period</div>
           ) : (
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
@@ -321,8 +346,8 @@ export default function DashboardPage() {
 
         {/* ── Top Products ── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <TopProductsCard title="🍞 Top 10 Bakery Products" products={topBakery} isLoading={isLoading} />
-          <TopProductsCard title="🎁 Top 10 Gift Box Products" products={topGiftBoxes} isLoading={isLoading} />
+          <TopProductsCard title={`🍞 Top 10 Bakery Products (${activeView})`} products={topBakery} isLoading={isLoading} />
+          <TopProductsCard title={`🎁 Top 10 Gift Box Products (${activeView})`} products={topGiftBoxes} isLoading={isLoading} />
         </div>
 
         {/* ── Low Stock Alert ── */}
@@ -333,7 +358,7 @@ export default function DashboardPage() {
               <h3 className="font-bold text-slate-800">Low Stock Alerts</h3>
               <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">{isLoading ? "…" : lowStockItems.length}</span>
             </div>
-            <p className="text-xs text-slate-500">Bakery &lt;400 · Gift Boxes &lt;100</p>
+            <p className="text-xs text-slate-500">Company-wide stock levels</p>
           </div>
           {isLoading ? (
             <div className="p-6 text-center text-slate-400 text-sm">Loading...</div>
@@ -354,18 +379,11 @@ export default function DashboardPage() {
                 <tbody className="divide-y divide-slate-50">
                   {lowStockItems.map((item, i) => (
                     <tr key={i} className="hover:bg-amber-50/50 transition-colors">
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{item.name}</p>
-                        <p className="text-xs text-slate-400 font-mono">{item.sku}</p>
-                      </td>
+                      <td className="px-4 py-3"><p className="font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-400 font-mono">{item.sku}</p></td>
                       <td className="px-4 py-3 text-slate-600 text-xs">{item.category}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className={`font-black text-base ${item.quantity === 0 ? "text-red-600" : "text-amber-600"}`}>{item.quantity}</span>
-                      </td>
+                      <td className="px-4 py-3 text-right"><span className={`font-black text-base ${item.quantity === 0 ? "text-red-600" : "text-amber-600"}`}>{item.quantity}</span></td>
                       <td className="px-4 py-3 text-right text-slate-500 font-semibold">{item.threshold}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="font-bold text-red-600">-{item.threshold - item.quantity}</span>
-                      </td>
+                      <td className="px-4 py-3 text-right"><span className="font-bold text-red-600">-{item.threshold - item.quantity}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -379,17 +397,11 @@ export default function DashboardPage() {
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex items-center gap-2">
               <Package className="h-5 w-5 text-indigo-500" />
-              <h3 className="font-bold text-slate-800">Sale Day Book</h3>
+              <h3 className="font-bold text-slate-800">Sale Day Book ({activeView})</h3>
             </div>
             <div className="flex items-center gap-3 sm:ml-auto">
-              <input
-                type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)}
-                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-500 font-medium"
-              />
-              <button
-                onClick={fetchDayBook}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm"
-              >
+              <input type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-500 font-medium" />
+              <button onClick={fetchDayBook} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm">
                 <Download className="h-4 w-4" /> Generate Report
               </button>
             </div>
@@ -403,16 +415,12 @@ export default function DashboardPage() {
           <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col print:shadow-none print:max-h-none print:h-auto print:block">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50 shrink-0 print:p-0 print:bg-white print:border-none print:mb-6">
               <div>
-                <h2 className="text-lg font-bold text-slate-800 print:text-2xl">Sale Day Book</h2>
-                <p className="text-sm text-slate-500">All orders for {fmtDate(dayBookDate)}</p>
+                <h2 className="text-lg font-bold text-slate-800 print:text-2xl">{activeView} Day Book</h2>
+                <p className="text-sm text-slate-500">All transactions for {fmtDate(dayBookDate)}</p>
               </div>
               <div className="flex items-center gap-3 print:hidden">
-                <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
-                  <Printer className="h-3.5 w-3.5" /> Print
-                </button>
-                <button onClick={() => setIsDayBookOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors">
-                  <X className="h-5 w-5" />
-                </button>
+                <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"><Printer className="h-3.5 w-3.5" /> Print</button>
+                <button onClick={() => setIsDayBookOpen(false)} className="text-slate-400 hover:text-red-500 transition-colors"><X className="h-5 w-5" /></button>
               </div>
             </div>
 
@@ -420,26 +428,20 @@ export default function DashboardPage() {
               {isDayBookLoading ? (
                 <div className="py-20 text-center text-slate-400">Loading day book...</div>
               ) : dayBookData.length === 0 ? (
-                <div className="py-20 text-center text-slate-400">No orders found for {fmtDate(dayBookDate)}</div>
+                <div className="py-20 text-center text-slate-400">No transactions found for {fmtDate(dayBookDate)}</div>
               ) : (
                 <div className="space-y-4">
                   {dayBookData.map((entry, i) => (
                     <div key={i} className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300 print:rounded-lg print:break-inside-avoid">
                       <div className="flex items-center justify-between bg-slate-800 text-white px-4 py-3 print:bg-slate-100 print:text-slate-900 print:border-b print:border-slate-300">
                         <div className="flex items-center gap-4">
-                          <button
-                            onClick={() => router.push(`/orders/${entry.order_id}`)}
-                            className="font-bold text-blue-300 hover:text-blue-200 underline underline-offset-2 text-sm print:text-slate-900 print:no-underline"
-                          >
-                            {entry.order_number}
+                          <button onClick={() => router.push(activeView === "Orders" ? `/orders/${entry.document_id}` : `/cash-memo/${entry.document_id}`)} className="font-bold text-blue-300 hover:text-blue-200 underline underline-offset-2 text-sm print:text-slate-900 print:no-underline">
+                            {entry.document_number}
                           </button>
-                          <div className="flex items-center gap-1.5">
-                            <Users className="h-3.5 w-3.5 text-slate-400 print:text-slate-600" />
-                            <span className="text-sm font-semibold">{entry.customer_name}</span>
-                          </div>
+                          <div className="flex items-center gap-1.5"><Users className="h-3.5 w-3.5 text-slate-400 print:text-slate-600" /><span className="text-sm font-semibold">{entry.customer_name}</span></div>
                         </div>
                         <div className="text-right">
-                          <p className="text-xs text-slate-400 print:text-slate-600">Order Value</p>
+                          <p className="text-xs text-slate-400 print:text-slate-600">Total Value</p>
                           <p className="font-black text-white print:text-slate-900">{fmt(entry.total_amount)}</p>
                         </div>
                       </div>
@@ -464,7 +466,7 @@ export default function DashboardPage() {
                         </tbody>
                         <tfoot className="border-t border-slate-200 bg-slate-50">
                           <tr>
-                            <td colSpan={3} className="px-4 py-2.5 font-bold text-slate-600 text-right">Order Total</td>
+                            <td colSpan={3} className="px-4 py-2.5 font-bold text-slate-600 text-right">Total</td>
                             <td className="px-4 py-2.5 font-black text-slate-800 text-right">{fmt(entry.total_amount)}</td>
                           </tr>
                         </tfoot>
@@ -472,22 +474,12 @@ export default function DashboardPage() {
                     </div>
                   ))}
 
-                  {/* ── Day Book Summary ── */}
                   <div className="mt-6 p-5 bg-slate-900 rounded-xl text-white print:bg-white print:border print:border-slate-300 print:text-slate-900 print:break-inside-avoid">
                     <h4 className="font-bold mb-3 text-slate-300 uppercase text-xs tracking-wider print:text-slate-500">Day Summary · {fmtDate(dayBookDate)}</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                      <div>
-                        <p className="text-slate-400 text-xs print:text-slate-500">Total Orders</p>
-                        <p className="text-2xl font-black">{dayBookData.length}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400 text-xs print:text-slate-500">Gross Revenue</p>
-                        <p className="text-2xl font-black text-blue-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.total_amount, 0))}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400 text-xs print:text-slate-500">Collected Today</p>
-                        <p className="text-2xl font-black text-green-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.payments_on_day, 0))}</p>
-                      </div>
+                      <div><p className="text-slate-400 text-xs print:text-slate-500">Transactions</p><p className="text-2xl font-black">{dayBookData.length}</p></div>
+                      <div><p className="text-slate-400 text-xs print:text-slate-500">Gross Revenue</p><p className="text-2xl font-black text-blue-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.total_amount, 0))}</p></div>
+                      <div><p className="text-slate-400 text-xs print:text-slate-500">Collected Today</p><p className="text-2xl font-black text-green-300 print:text-slate-900">{fmt(dayBookData.reduce((s, e) => s + e.payments_on_day, 0))}</p></div>
                     </div>
                   </div>
                 </div>
@@ -500,7 +492,6 @@ export default function DashboardPage() {
   )
 }
 
-// ─── Top Products Card Component ─────────────────────────────────────────────
 function TopProductsCard({ title, products, isLoading }: { title: string; products: TopProduct[]; isLoading: boolean }) {
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -518,13 +509,10 @@ function TopProductsCard({ title, products, isLoading }: { title: string; produc
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={products.slice(0, 5)} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                 <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#475569" }} axisLine={false} tickLine={false} width={120}
-                  tickFormatter={v => v.length > 18 ? v.substring(0, 17) + "…" : v} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#475569" }} axisLine={false} tickLine={false} width={120} tickFormatter={v => v.length > 18 ? v.substring(0, 17) + "…" : v} />
                 <Tooltip formatter={(v: unknown) => [v != null ? `${v} units` : "—", "Qty"]} contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 11 }} />
                 <Bar dataKey="qty" radius={[0, 4, 4, 0]}>
-                  {products.slice(0, 5).map((_, index) => (
-                    <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                  ))}
+                  {products.slice(0, 5).map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -532,25 +520,13 @@ function TopProductsCard({ title, products, isLoading }: { title: string; produc
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="border-b border-slate-100">
-                <tr>
-                  <th className="text-left py-2 text-slate-400 font-bold">#</th>
-                  <th className="text-left py-2 text-slate-400 font-bold">Product</th>
-                  <th className="text-right py-2 text-slate-400 font-bold">Qty</th>
-                  <th className="text-right py-2 text-slate-400 font-bold">Revenue</th>
-                </tr>
+                <tr><th className="text-left py-2 text-slate-400 font-bold">#</th><th className="text-left py-2 text-slate-400 font-bold">Product</th><th className="text-right py-2 text-slate-400 font-bold">Qty</th><th className="text-right py-2 text-slate-400 font-bold">Revenue</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {products.map((p, i) => (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="py-1.5 pr-2">
-                      <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-black shrink-0" style={{ background: COLORS[i % COLORS.length] }}>
-                        {i + 1}
-                      </span>
-                    </td>
-                    <td className="py-1.5">
-                      <p className="font-semibold text-slate-700 leading-tight">{p.name}</p>
-                      <p className="text-slate-400 font-mono text-[10px]">{p.sku}</p>
-                    </td>
+                    <td className="py-1.5 pr-2"><span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-black shrink-0" style={{ background: COLORS[i % COLORS.length] }}>{i + 1}</span></td>
+                    <td className="py-1.5"><p className="font-semibold text-slate-700 leading-tight">{p.name}</p><p className="text-slate-400 font-mono text-[10px]">{p.sku}</p></td>
                     <td className="py-1.5 text-right font-black text-slate-800">{p.qty}</td>
                     <td className="py-1.5 text-right font-semibold text-green-700">{fmt(p.revenue)}</td>
                   </tr>
