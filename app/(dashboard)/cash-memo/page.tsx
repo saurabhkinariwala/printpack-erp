@@ -40,7 +40,7 @@ export default function CashMemosList() {
     const { data } = await supabase.from('cash_memos').select(`
       id, memo_number, memo_date, customer_name, customer_mobile, total_amount, discount_value, is_gst_applied, created_at,
       payments (amount, payment_date)
-    `).order('memo_number', { ascending: false });
+    `).order('created_at', { ascending: false }); // ⚡ Changed to created_at
 
     if (data) setMemos(data as unknown as CashMemo[]);
     setIsLoading(false);
@@ -100,10 +100,17 @@ export default function CashMemosList() {
     let aValue: any = a[sortConfig.key as keyof CashMemo];
     let bValue: any = b[sortConfig.key as keyof CashMemo];
 
+    // ⚡ THE FIX: Strip letters and convert to integers for numeric math sorting
+    if (sortConfig.key === 'memo_number') {
+      aValue = parseInt(a.memo_number.replace(/\D/g, '') || '0', 10);
+      bValue = parseInt(b.memo_number.replace(/\D/g, '') || '0', 10);
+    }
+
     if (sortConfig.key === 'customer_name') {
       aValue = a.customer_name || "";
       bValue = b.customer_name || "";
     }
+    
     if (sortConfig.key === 'payment') {
       const aPaid = a.payments?.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) || 0;
       const bPaid = b.payments?.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) || 0;

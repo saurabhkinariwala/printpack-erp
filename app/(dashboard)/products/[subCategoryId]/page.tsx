@@ -4,13 +4,14 @@ import { useState, useEffect, use, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   Search, Edit2, Image as ImageIcon, UploadCloud, Save, X, Loader2,
-  Layers, MapPin, Plus, FileSpreadsheet, Download, CheckCircle, AlertTriangle, Info, Package
+  Layers, MapPin, Plus, FileSpreadsheet, Download, CheckCircle, AlertTriangle, Info, Package, Trash2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
 type Stock = { quantity: number; locations: { id: string; name: string } };
 type Item = {
   id: string; name: string; sku: string; price: number; pack_size: number; image_path: string;
+  gst_rate?: number;
   sub_sub_categories?: { name: string };
   stock?: Stock[];
 };
@@ -39,7 +40,7 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
   const [search, setSearch] = useState("");
 
   const [editingItem, setEditingItem] = useState<Item | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", sku: "", price: 0, pack_size: 10, image_path: "", stock: [] as { location_id: string; name: string; quantity: number }[] });
+  const [editForm, setEditForm] = useState({ name: "", sku: "", price: 0, gst_rate: 18, pack_size: 10, image_path: "", stock: [] as { location_id: string; name: string; quantity: number }[] });
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -82,7 +83,7 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
       if (!isLeaf) { setItems([]); setIsLoading(false); return; }
 
       const { data: itemsData } = await supabase.from("items").select(`
-        id, name, sku, price, pack_size, image_path, sub_sub_categories(name), stock(quantity, locations(id, name))
+        id, name, sku, price, pack_size, gst_rate, image_path, sub_sub_categories(name), stock(quantity, locations(id, name))
       `).or(`sub_category_id.eq.${targetCategoryId},sub_sub_category_id.eq.${targetCategoryId}`);
 
       if (itemsData) setItems(itemsData as unknown as Item[]);
@@ -119,8 +120,25 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
 
   const openEditModal = (item: Item) => {
     setEditingItem(item);
-    const mappedStock = item.stock?.map(s => ({ location_id: s.locations.id, name: s.locations.name, quantity: s.quantity })) || [];
-    setEditForm({ name: item.name, sku: item.sku, price: item.price, pack_size: item.pack_size || 10, image_path: item.image_path || "", stock: mappedStock });
+    
+    const mappedStock = locations.map(loc => {
+      const existingStock = item.stock?.find(s => s.locations?.id === loc.id);
+      return {
+        location_id: loc.id,
+        name: loc.name,
+        quantity: existingStock ? existingStock.quantity : 0
+      };
+    });
+
+    setEditForm({ 
+      name: item.name, 
+      sku: item.sku, 
+      price: item.price, 
+      gst_rate: item.gst_rate || 18,
+      pack_size: item.pack_size || 10, 
+      image_path: item.image_path || "", 
+      stock: mappedStock 
+    });
     setUploadFile(null);
   };
 
@@ -140,7 +158,15 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
       finalImagePath = publicUrlData.publicUrl;
     }
 
-    const { error: itemError } = await supabase.from("items").update({ name: editForm.name, sku: editForm.sku, price: editForm.price, pack_size: editForm.pack_size, image_path: finalImagePath }).eq("id", editingItem.id);
+    const { error: itemError } = await supabase.from("items").update({ 
+      name: editForm.name, 
+      sku: editForm.sku, 
+      price: editForm.price, 
+      gst_rate: editForm.gst_rate,
+      pack_size: editForm.pack_size, 
+      image_path: finalImagePath 
+    }).eq("id", editingItem.id);
+    
     if (itemError) { alert("Error saving product: " + itemError.message); setIsSaving(false); return; }
 
     if (editForm.stock.length > 0) {
@@ -179,10 +205,51 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
     const stockEntries = Object.entries(addForm.stock).filter(([, qty]) => qty > 0);
     if (stockEntries.length > 0) await supabase.from("stock").insert(stockEntries.map(([locId, qty]) => ({ item_id: newItem.id, location_id: locId, quantity: qty })));
 
-    const { data: refreshedItem } = await supabase.from("items").select(`id, name, sku, price, pack_size, image_path, sub_sub_categories(name), stock(quantity, locations(id, name))`).eq("id", newItem.id).single();
+    const { data: refreshedItem } = await supabase.from("items").select(`id, name, sku, price, pack_size, gst_rate, image_path, sub_sub_categories(name), stock(quantity, locations(id, name))`).eq("id", newItem.id).single();
     if (refreshedItem) setItems(prev => [...prev, refreshedItem as unknown as Item]);
 
     setIsAddOpen(false); setAddForm({ name: "", sku: "", price: 0, gst_rate: 18, pack_size: 10, image_path: "", stock: {} }); setAddFile(null); setIsAdding(false);
+  };
+
+  const handleDeleteProduct = async (item: Item) => {
+    if (!window.confirm(`Are you absolutely sure you want to delete "${item.name}"?`)) return;
+    
+    setIsSaving(true);
+
+    try {
+      const { data: orderData } = await supabase.from("order_items").select("orders(order_number)").eq("item_id", item.id).limit(1);
+
+      if (orderData && orderData.length > 0) {
+        const orderInfo = Array.isArray(orderData[0].orders) ? orderData[0].orders[0] : orderData[0].orders;
+        const orderNum = orderInfo?.order_number || "an Order";
+        alert(`Cannot delete product as it is used in ${orderNum}.`);
+        setIsSaving(false);
+        return;
+      }
+
+      const { data: cmData } = await supabase.from("cash_memo_items").select("cash_memos(memo_number)").eq("item_id", item.id).limit(1);
+
+      if (cmData && cmData.length > 0) {
+        const cmInfo = Array.isArray(cmData[0].cash_memos) ? cmData[0].cash_memos[0] : cmData[0].cash_memos;
+        const cmNum = cmInfo?.memo_number || "a Cash Memo";
+        alert(`Cannot delete product as it is used in ${cmNum}.`);
+        setIsSaving(false);
+        return;
+      }
+
+      await supabase.from("stock").delete().eq("item_id", item.id);
+      const { error: deleteError } = await supabase.from("items").delete().eq("id", item.id);
+
+      if (deleteError) {
+        alert("Error deleting product: " + deleteError.message);
+      } else {
+        setItems(items.filter(i => i.id !== item.id));
+      }
+    } catch (err: any) {
+      alert("An unexpected error occurred: " + err.message);
+    }
+
+    setIsSaving(false);
   };
 
   const handleExcelParse = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -329,7 +396,14 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
                         ) : (
                           <div className="h-full w-full flex items-center justify-center"><ImageIcon className="w-12 h-12 text-slate-300" /></div>
                         )}
-                        <button onClick={() => openEditModal(item)} className="absolute top-2 right-2 bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 p-2 rounded-lg shadow-sm opacity-0 group-hover:opacity-100 transition-all z-10"><Edit2 className="w-4 h-4" /></button>
+                        <div className="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all z-10">
+                          <button onClick={() => openEditModal(item)} title="Edit Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 p-2 rounded-lg shadow-sm transition-colors">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeleteProduct(item)} disabled={isSaving} title="Delete Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-red-600 hover:border-red-300 p-2 rounded-lg shadow-sm transition-colors disabled:opacity-50">
+                            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                          </button>
+                        </div>
                         <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded shadow-sm">Pack of {item.pack_size || 10}</div>
                       </div>
                       <div className="p-4 flex-1 flex flex-col">
@@ -481,6 +555,18 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
                   <div className="grid grid-cols-2 gap-3">
                     <div><label className="text-xs font-bold text-slate-500 uppercase block mb-1">SKU</label><input type="text" value={editForm.sku} onChange={e => setEditForm({ ...editForm, sku: e.target.value })} className="w-full p-2 border border-slate-300 rounded-lg text-sm font-mono outline-none focus:border-blue-500" /></div>
                     <div><label className="text-xs font-bold text-slate-500 uppercase block mb-1">Price (₹)</label><input type="number" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: Number(e.target.value) })} className="w-full p-2 border border-slate-300 rounded-lg text-sm font-bold outline-none focus:border-blue-500" /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase block mb-1">GST Rate (%)</label>
+                      <select value={editForm.gst_rate} onChange={e => setEditForm({ ...editForm, gst_rate: Number(e.target.value) })} className="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500 bg-white">
+                        {[0, 5, 12, 18, 28].map(r => <option key={r} value={r}>{r}%</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Pack Size</label>
+                      <input type="number" value={editForm.pack_size} onChange={e => setEditForm({ ...editForm, pack_size: Number(e.target.value) })} className="w-full p-2 border border-slate-300 rounded-lg text-sm font-bold outline-none focus:border-blue-500" />
+                    </div>
                   </div>
                 </div>
               </div>
