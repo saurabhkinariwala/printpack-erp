@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Search, Calendar, MapPin, Download, Package, ArrowRight, Loader2, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { useSearchParams } from 'next/navigation'
 
 type Location = { id: string; name: string }
 type Item = { id: string; name: string; sku: string }
@@ -27,6 +28,8 @@ type LedgerEntry = {
 
 export default function ItemLedgerPage() {
   const supabase = createClient()
+
+  const searchParams = useSearchParams()
 
   const [isLoading, setIsLoading] = useState(true)
   const [isFetchingData, setIsFetchingData] = useState(false)
@@ -61,7 +64,19 @@ export default function ItemLedgerPage() {
       if (locData) setLocations(locData);
 
       const { data: itemData } = await supabase.from('items').select('id, name, sku').order('name');
-      if (itemData) setItems(itemData);
+      if (itemData) {
+        setItems(itemData);
+        
+        // ⚡ THE MAGIC: Check the URL for an itemId, and auto-select it if it exists!
+        const urlItemId = searchParams.get('itemId');
+        if (urlItemId) {
+          const preselected = itemData.find(item => item.id === urlItemId);
+          if (preselected) {
+            setSelectedItem(preselected);
+            setSearch(`${preselected.name} (${preselected.sku})`); // Auto-fill the search bar too!
+          }
+        }
+      }
 
       setIsLoading(false);
     }
@@ -185,14 +200,15 @@ export default function ItemLedgerPage() {
 
 
   // ── Excel Export ──
+ // ── Excel Export ──
   const handleExportExcel = () => {
     if (!selectedItem) return alert("Please select an item first.");
 
     const headers = ["Date", "Transaction Type", "Route", "Vehicle / Notes", "Qty IN (+)", "Qty OUT (-)", "Running Balance"];
     
-    // Add Opening Balance Row
+    // ⚡ FIX 1: Wrap the opening balance in an array and join it with a comma
     const csvData = [
-      `"${startDate}"`, `"OPENING BALANCE"`, `""`, `""`, `""`, `""`, openingBalance
+      [`"${startDate}"`, `"OPENING BALANCE"`, `""`, `""`, `""`, `""`, openingBalance].join(",")
     ];
 
     // Add Transactions (We reverse them back so Excel flows chronologically downwards)
@@ -200,7 +216,8 @@ export default function ItemLedgerPage() {
       const route = e.from_loc || e.to_loc ? `${e.from_loc?.name || 'External'} -> ${e.to_loc?.name || 'External'}` : e.transaction_type;
       const notes = [e.vehicle_number, e.notes].filter(Boolean).join(" | ");
       
-      csvData.push(
+      // ⚡ FIX 2: Wrap the pushed elements in an array and join them with a comma
+      csvData.push([
         `"${new Date(e.created_at).toLocaleString()}"`,
         `"${e.transaction_type}"`,
         `"${route}"`,
@@ -208,11 +225,11 @@ export default function ItemLedgerPage() {
         e.qtyIn || "",
         e.qtyOut || "",
         e.runningBalance
-      );
+      ].join(","));
     });
 
-    // Add Closing Balance Row
-    csvData.push(`"${endDate}"`, `"CLOSING BALANCE"`, `""`, `""`, totalIn, totalOut, closingBalance);
+    // ⚡ FIX 3: Wrap the closing balance row as well
+    csvData.push([`"${endDate}"`, `"CLOSING BALANCE"`, `""`, `""`, totalIn, totalOut, closingBalance].join(","));
 
     const csvString = [headers.join(","), ...csvData].join("\n");
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });

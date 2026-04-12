@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react"
 import { MessageSquare, X, Send, Loader2, Bot, User } from "lucide-react"
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function Chatbot() {
   const [isOpen, setIsOpen] = useState(false)
@@ -20,13 +22,13 @@ export default function Chatbot() {
     scrollToBottom()
   }, [messages])
 
- const handleSend = async (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || isLoading) return
 
     const userMsg = input.trim()
     setInput("")
-    
+
     // 1. Create the new array containing the entire chat history plus the new message
     const newMessages = [...messages, { role: "user" as const, content: userMsg }]
     setMessages(newMessages)
@@ -36,16 +38,16 @@ export default function Chatbot() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }) 
+        body: JSON.stringify({ messages: newMessages })
       })
-      
+
       if (!response.ok) {
         throw new Error("Server error");
       }
 
       // ⚡ Changed back to JSON
       const data = await response.json()
-      
+
       setMessages(prev => [...prev, { role: "assistant", content: data.reply }])
     } catch (error) {
       console.error(error);
@@ -67,7 +69,7 @@ export default function Chatbot() {
 
       {/* Slide-out Sidebar */}
       <div className={`fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white shadow-2xl border-l border-slate-200 z-50 transform transition-transform duration-300 flex flex-col ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
-        
+
         {/* Header */}
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -84,13 +86,41 @@ export default function Chatbot() {
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === "user" ? "bg-slate-200 text-slate-600" : "bg-blue-100 text-blue-600"}`}>
-                {msg.role === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-              </div>
-              <div className={`p-3 rounded-2xl max-w-[80%] text-sm ${msg.role === "user" ? "bg-slate-800 text-white rounded-tr-sm" : "bg-white border border-slate-200 text-slate-700 shadow-sm rounded-tl-sm"}`}>
-                {msg.content}
+          {messages.map((message, index) => (
+            <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
+              <div className={`rounded-lg p-4 max-w-[85%] ${message.role === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-black'
+                }`}>
+
+                {message.role === 'user' ? (
+                  // Render user messages as normal text
+                  <p>{message.content}</p>
+                ) : (
+                  // ⚡ Render AI messages through the Markdown parser
+                  <div className="prose prose-sm max-w-none">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        // This intercepts the markdown tables and injects Tailwind CSS for beautiful styling
+                        table: ({ node, ...props }) => (
+                          <div className="overflow-x-auto my-4">
+                            <table className="min-w-full border-collapse border border-gray-300" {...props} />
+                          </div>
+                        ),
+                        th: ({ node, ...props }) => (
+                          <th className="bg-gray-200 border border-gray-300 px-4 py-2 text-left font-bold" {...props} />
+                        ),
+                        td: ({ node, ...props }) => (
+                          <td className="border border-gray-300 px-4 py-2" {...props} />
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
+                )}
+
               </div>
             </div>
           ))}

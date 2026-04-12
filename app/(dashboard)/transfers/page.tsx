@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
   Truck, Plus, X, Loader2, Search, Calendar, ArrowRight,
-  Package, RefreshCw, ChevronDown, Save, MapPin, Hash
+  Package, RefreshCw, Save, MapPin, Hash, Pencil, Trash2
 } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
 
@@ -23,6 +23,9 @@ type TransferRecord = {
   vehicle_number: string | null;
   notes: string | null;
   reference_id?: string | null;
+  item_id: string;
+  from_location_id: string;
+  to_location_id: string;
   from_location: { name: string } | null;
   to_location: { name: string } | null;
   items: { name: string; sku: string } | null;
@@ -30,13 +33,20 @@ type TransferRecord = {
 
 export default function TransfersPage() {
   const supabase = createClient()
-  const { isCategoryAllowed } = usePermissions()
+  const { isCategoryAllowed, canManageRoles } = usePermissions()
 
   const [locations, setLocations] = useState<Location[]>([])
   const [items, setItems] = useState<Item[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+  // View/Edit/Delete States
+  const [selectedRecord, setSelectedRecord] = useState<TransferRecord | null>(null)
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [editVehicle, setEditVehicle] = useState("")
+  const [editNotes, setEditNotes] = useState("")
 
   // Transfer form
   const [fromLocation, setFromLocation] = useState("")
@@ -58,7 +68,7 @@ export default function TransfersPage() {
   const [historySearch, setHistorySearch] = useState("")
 
   // ── Fetch locations + items with stock ──
-  const fetchData = useCallback(async () => {
+  const fetchData = async () => {
     setIsLoading(true)
     const { data: locData } = await supabase.from("locations").select("id, name, type").order("name")
     const { data: stockData } = await supabase.from("stock").select(`
@@ -73,7 +83,6 @@ export default function TransfersPage() {
       const map: Record<string, Item> = {}
       stockData.forEach((s: any) => {
         if (!s.items) return
-        // ← permission gate: skip items from categories the employee can't access
         const topCat = s.items.sub_categories?.categories?.name
         if (!isCategoryAllowed(topCat)) return
         if (!map[s.item_id]) {
@@ -84,17 +93,18 @@ export default function TransfersPage() {
       setItems(Object.values(map).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })))
     }
     setIsLoading(false)
-  }, [supabase])
+  }
 
   // ── Fetch transfer history ──
-const fetchHistory = useCallback(async () => {
+  const fetchHistory = async () => {
     setHistoryLoading(true)
-    
+
     const { data, error } = await supabase
       .from("stock_ledger")
       .select(`
         id, created_at, transaction_type, quantity,
         vehicle_number, notes, reference_id,
+        item_id, from_location_id, to_location_id,
         from_location:locations!from_location_id(name),
         to_location:locations!to_location_id(name),
         items(name, sku)
@@ -109,11 +119,21 @@ const fetchHistory = useCallback(async () => {
     } else if (data) {
       setHistory(data as unknown as TransferRecord[])
     }
-    
-    setHistoryLoading(false)
-  }, [startDate, endDate, supabase])
 
-  useEffect(() => { fetchData(); fetchHistory() }, [fetchData, fetchHistory])
+    setHistoryLoading(false)
+  }
+
+  // ⚡ FIX 1: Fetch the core locations and items ONLY once when the page loads
+  useEffect(() => {
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ⚡ FIX 2: Fetch history when the page loads, and ONLY when the dates change
+  useEffect(() => {
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
   // ── Add item line ──
   const addLine = (item: Item) => {
@@ -123,7 +143,6 @@ const fetchHistory = useCallback(async () => {
     setItemSearch("")
   }
 
-  // When fromLocation changes, update available qty on all lines
   const handleFromLocationChange = (locId: string) => {
     setFromLocation(locId)
     setLines(lines.map(l => {
@@ -135,8 +154,7 @@ const fetchHistory = useCallback(async () => {
   const removeLine = (item_id: string) => setLines(lines.filter(l => l.item_id !== item_id))
   const updateQty = (item_id: string, qty: string) => setLines(lines.map(l => l.item_id === item_id ? { ...l, qty } : l))
 
-  // ── Save transfer ──
-  // ── Save transfer ──
+  // ── Save Transfer ──
   const handleSave = async () => {
     setFormError(null)
     if (!fromLocation) return setFormError("Select a source location.")
@@ -148,7 +166,6 @@ const fetchHistory = useCallback(async () => {
     const validLines = lines.filter(l => Number(l.qty) > 0)
     if (validLines.length === 0) return setFormError("Enter a quantity greater than 0 for at least one item.")
 
-    // Check no line exceeds available stock
     for (const l of validLines) {
       if (Number(l.qty) > l.available) {
         return setFormError(`"${l.name}" only has ${l.available} units at source. You entered ${l.qty}.`)
@@ -176,7 +193,7 @@ const fetchHistory = useCallback(async () => {
       )
       if (e2) { setFormError("Stock update failed: " + e2.message); setIsSaving(false); return }
 
-      // Record in ledger (NOW WITH EXPLICIT ERROR CHECKING!)
+      // Record in ledger
       const { error: ledgerError } = await supabase.from("stock_ledger").insert({
         item_id: l.item_id,
         from_location_id: fromLocation,
@@ -205,6 +222,85 @@ const fetchHistory = useCallback(async () => {
     setFromLocation("")
     setToLocation("")
     setIsSaving(false)
+  }
+
+  // ── Delete Transfer ──
+  const handleDelete = async (record: TransferRecord) => {
+    if (!confirm(`Are you sure you want to delete this transfer? This will return ${record.quantity} units back to the source location.`)) return;
+
+    setIsDeleting(true);
+
+    try {
+      const { data: fullRecord } = await supabase
+        .from('stock_ledger')
+        .select('item_id, from_location_id, to_location_id, quantity')
+        .eq('id', record.id)
+        .single();
+
+      if (!fullRecord) throw new Error("Could not find full record details.");
+
+      const { data: stockLevels } = await supabase
+        .from('stock')
+        .select('location_id, quantity')
+        .eq('item_id', fullRecord.item_id)
+        .in('location_id', [fullRecord.from_location_id, fullRecord.to_location_id]);
+
+      const sourceStock = stockLevels?.find(s => s.location_id === fullRecord.from_location_id)?.quantity || 0;
+      const destStock = stockLevels?.find(s => s.location_id === fullRecord.to_location_id)?.quantity || 0;
+
+      // Return stock to Source (Add)
+      await supabase.from('stock').upsert({
+        item_id: fullRecord.item_id,
+        location_id: fullRecord.from_location_id,
+        quantity: sourceStock + fullRecord.quantity
+      });
+
+      // Remove stock from Destination (Subtract)
+      await supabase.from('stock').upsert({
+        item_id: fullRecord.item_id,
+        location_id: fullRecord.to_location_id,
+        quantity: destStock - fullRecord.quantity
+      });
+
+      // Delete the ledger record
+      await supabase.from('stock_ledger').delete().eq('id', record.id);
+
+      await fetchData();
+      await fetchHistory();
+    } catch (error: any) {
+      alert("Failed to delete: " + error.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // ── Edit Transfer ──
+  const openEditModal = (record: TransferRecord) => {
+    setSelectedRecord(record);
+    setEditVehicle(record.vehicle_number || "");
+    setEditNotes(record.notes || "");
+    setIsEditModalOpen(true);
+  }
+
+  const handleEditSave = async () => {
+    if (!selectedRecord) return;
+    setIsSaving(true);
+
+    const { error } = await supabase
+      .from('stock_ledger')
+      .update({
+        vehicle_number: editVehicle.toUpperCase(),
+        notes: editNotes
+      })
+      .eq('id', selectedRecord.id);
+
+    if (error) {
+      alert("Update failed: " + error.message);
+    } else {
+      await fetchHistory();
+      setIsEditModalOpen(false);
+    }
+    setIsSaving(false);
   }
 
   const filteredItems = items.filter(item =>
@@ -305,6 +401,9 @@ const fetchHistory = useCallback(async () => {
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Vehicle</th>
                   <th className="text-right px-5 py-3 text-xs font-bold text-slate-500 uppercase">Qty</th>
                   <th className="text-left px-5 py-3 text-xs font-bold text-slate-500 uppercase">Notes</th>
+                  {canManageRoles && (
+                    <th className="text-right px-5 py-3 text-xs font-bold text-slate-500 uppercase w-24">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -337,6 +436,25 @@ const fetchHistory = useCallback(async () => {
                     </td>
                     <td className="px-5 py-3.5 text-right font-black text-slate-800">{h.quantity}</td>
                     <td className="px-5 py-3.5 text-xs text-slate-500">{h.notes || "—"}</td>
+                    {canManageRoles && (
+                      <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
+                        <button
+                          onClick={() => openEditModal(h)}
+                          title="Edit Vehicle/Notes"
+                          className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 p-1.5 rounded transition-colors inline-flex items-center justify-center"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(h)}
+                          disabled={isDeleting}
+                          title="Delete Transfer"
+                          className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded disabled:opacity-50 transition-colors inline-flex items-center justify-center"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -349,8 +467,6 @@ const fetchHistory = useCallback(async () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8">
           <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-
-            {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-slate-50 shrink-0">
               <div>
                 <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
@@ -364,15 +480,12 @@ const fetchHistory = useCallback(async () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
-
-              {/* Error */}
               {formError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 font-semibold flex items-start gap-2">
                   <X className="h-4 w-4 shrink-0 mt-0.5 text-red-500" /> {formError}
                 </div>
               )}
 
-              {/* Route + Vehicle */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-blue-50 border border-blue-100 rounded-xl">
                 <div>
                   <label className="text-[10px] font-bold text-blue-800 uppercase mb-1 block">From Location *</label>
@@ -414,7 +527,6 @@ const fetchHistory = useCallback(async () => {
                 </div>
               </div>
 
-              {/* Item Search */}
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1.5">Add Items to Transfer</label>
                 <div className="relative">
@@ -445,7 +557,6 @@ const fetchHistory = useCallback(async () => {
                 )}
               </div>
 
-              {/* Line Items */}
               {lines.length > 0 && (
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-sm">
@@ -468,11 +579,10 @@ const fetchHistory = useCallback(async () => {
                           <td className="px-4 py-2.5 text-right">
                             <input type="number" min="1" max={l.available}
                               value={l.qty} onChange={e => updateQty(l.item_id, e.target.value)}
-                              className={`w-24 p-1.5 border rounded-lg text-right font-bold outline-none focus:ring-2 text-sm ${
-                                Number(l.qty) > l.available
-                                  ? "border-red-400 text-red-700 focus:ring-red-200"
-                                  : "border-slate-300 text-slate-800 focus:ring-blue-200 focus:border-blue-500"
-                              }`}
+                              className={`w-24 p-1.5 border rounded-lg text-right font-bold outline-none focus:ring-2 text-sm ${Number(l.qty) > l.available
+                                ? "border-red-400 text-red-700 focus:ring-red-200"
+                                : "border-slate-300 text-slate-800 focus:ring-blue-200 focus:border-blue-500"
+                                }`}
                               placeholder="0"
                             />
                           </td>
@@ -489,7 +599,6 @@ const fetchHistory = useCallback(async () => {
               )}
             </div>
 
-            {/* Footer */}
             <div className="p-5 border-t border-slate-200 bg-slate-50 flex gap-3 shrink-0">
               <button onClick={() => setIsModalOpen(false)} className="flex-1 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100">
                 Cancel
@@ -503,6 +612,51 @@ const fetchHistory = useCallback(async () => {
           </div>
         </div>
       )}
+
+      {/* ── Edit Metadata Modal ── */}
+      {isEditModalOpen && selectedRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="font-bold text-lg text-slate-800">Edit Transfer Details</h3>
+              <button onClick={() => setIsEditModalOpen(false)}><X className="h-5 w-5 text-slate-400" /></button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Vehicle Number</label>
+                <input
+                  type="text"
+                  value={editVehicle}
+                  onChange={e => setEditVehicle(e.target.value)}
+                  className="w-full p-2 border rounded-lg uppercase outline-none focus:border-blue-500 font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Notes</label>
+                <input
+                  type="text"
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  className="w-full p-2 border rounded-lg outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 font-medium">
+                Note: Quantities and locations cannot be edited after a transfer is confirmed. To change quantities, delete this transfer and create a new one.
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button onClick={() => setIsEditModalOpen(false)} className="flex-1 py-2 bg-slate-100 rounded-lg font-bold text-slate-600 hover:bg-slate-200">Cancel</button>
+              <button onClick={handleEditSave} disabled={isSaving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50">
+                {isSaving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

@@ -35,6 +35,7 @@ export async function POST(req: Request) {
     const result1 = await generateText({
       model: google('gemini-2.5-flash'),
       system: SYSTEM_PROMPT,
+      maxRetries: 0,
       messages,
       tools: {
         execute_sql: tool({
@@ -43,19 +44,19 @@ export async function POST(req: Request) {
             query: z.string().describe('The PostgreSQL SELECT query to run.'),
           }),
           execute: async ({ query }) => {
-            console.log("\n🤖 AI is running SQL Query --->", query); 
-            
+            console.log("\n🤖 AI is running SQL Query --->", query);
+
             if (!query.trim().toUpperCase().startsWith('SELECT')) {
               return JSON.stringify({ error: "Security violation: Only SELECT queries are allowed." });
             }
 
             const client = new Client({ connectionString: process.env.SUPABASE_READONLY_DB_URL });
-            
+
             try {
               await client.connect();
               const res = await client.query(query);
               console.log(`✅ Query Success! Returned ${res.rows.length} rows.`);
-              return JSON.stringify(res.rows); 
+              return JSON.stringify(res.rows);
             } catch (error: any) {
               console.error("❌ SQL Error:", error.message);
               return JSON.stringify({ error: error.message });
@@ -68,23 +69,28 @@ export async function POST(req: Request) {
     });
 
     // ─── STEP 2: The Bulletproof Manual Loop ───
+    // ─── STEP 2: The Bulletproof Manual Loop ───
     if (result1.toolResults && result1.toolResults.length > 0) {
       console.log("🔄 Tool detected! Safely feeding data back to LLM...");
 
-      // Extract the raw JSON string directly
-      const rawDbData = (result1.toolResults[0] as any).result;
+      // ⚡ THE FIX: Safely stringify the entire tool result array so JavaScript doesn't swallow it
+      const rawDbData = JSON.stringify(result1.toolResults, null, 2);
+
+      // ⚡ DEBUG LOG: This prints exactly what the AI is about to read in Step 2
+      console.log("📦 Data being sent to AI:\n", rawDbData);
 
       // Make a fresh, safe call to Gemini to format the data
       const result2 = await generateText({
         model: google('gemini-2.5-flash'),
         system: "You are a helpful ERP assistant. Read the provided database JSON and answer the user's question clearly. Use Markdown tables if there are multiple records.",
+        maxRetries: 0,
         messages: [
           ...messages,
-          { 
-            role: "user", 
-            content: `SYSTEM INSTRUCTION: The database returned this raw data: ${rawDbData}\n\nBased ONLY on this data, answer my original question.` 
+          {
+            role: "user",
+            content: `SYSTEM INSTRUCTION: The database returned this raw data:\n${rawDbData}\n\nBased ONLY on this data, answer my original question.`
           }
-        ], 
+        ],
       });
 
       console.log("📝 Final LLM Text generated successfully.");
@@ -93,15 +99,14 @@ export async function POST(req: Request) {
 
     // Fallback if no tool was used
     return Response.json({ reply: result1.text || "Sorry, I couldn't formulate an answer." });
-    
-  } catch (error: any) {
-    console.error("Critical AI API Error:", error.message || error);
-    
-    // ⚡ Catch the specific 429 Quota Error
-    if (error?.statusCode === 429 || error?.message?.includes("429") || error?.message?.includes("Quota")) {
-      return Response.json({ reply: "I'm receiving too many requests right now! Google's free tier has a strict speed limit. Please wait about 60 seconds and try again." });
-    }
 
-    return Response.json({ reply: "I encountered a server error while processing the data. Please try again." });
+  } catch (error: any) {
+    // ⚡ This will print the raw, unfiltered error in your Next.js terminal
+    console.error("\n🚨 THE REAL SERVER ERROR IS:", error);
+
+    // ⚡ This will send the exact technical error directly to your chat window
+    return Response.json({
+      reply: `SERVER ERROR: ${error.message || "Unknown error occurred"}`
+    });
   }
 }

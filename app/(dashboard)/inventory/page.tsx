@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, X, Loader2, MapPin, Package, Filter, Save, History } from "lucide-react"
+import { Search, Plus, Minus, X, Loader2, MapPin, Package, Filter, Save, History, Calendar } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
 import Link from "next/link"
 
@@ -23,23 +23,31 @@ export default function InventoryPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("All")
-  const [locationFilter, setLocationFilter] = useState<string>("All")  // ← new
+  const [locationFilter, setLocationFilter] = useState<string>("All")
   const [categories, setCategories] = useState<string[]>([])
 
-  // Manufacture modal
+  // ── Manufacture (Add Stock) States ──
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [mfrItem, setMfrItem] = useState<StockRow | null>(null)
   const [mfrQtys, setMfrQtys] = useState<Record<string, string>>({})
   const [mfrNote, setMfrNote] = useState("")
   const [isSaving, setIsSaving] = useState(false)
 
-  const fetchData = useCallback(async () => {
+  // ── Adjustment (Remove Stock) States ──
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false)
+  const [adjustItem, setAdjustItem] = useState<StockRow | null>(null)
+  const [adjustLocation, setAdjustLocation] = useState("")
+  const [adjustQty, setAdjustQty] = useState("")
+  const [adjustReason, setAdjustReason] = useState("")
+  const [adjustDate, setAdjustDate] = useState(new Date().toISOString().split("T")[0])
+  const [isAdjusting, setIsAdjusting] = useState(false)
+  const [adjustError, setAdjustError] = useState<string | null>(null)
+
+const fetchData = async () => {
     setIsLoading(true)
 
     const { data: locData } = await supabase.from("locations").select("id, name, type").order("name")
 
-    // Query from items so items with no stock row still appear.
-    // stock is a left-join — Supabase returns stock as [] if no rows exist.
     const { data: itemsData } = await supabase.from("items").select(`
       id, name, sku, pack_size,
       sub_categories(name, categories(name)),
@@ -78,11 +86,15 @@ export default function InventoryPage() {
     setRows(allRows)
     setCategories(["All", ...Array.from(new Set(allRows.map(r => r.category))).sort()])
     setIsLoading(false)
-  }, [supabase])
+  }
 
-  useEffect(() => { fetchData() }, [fetchData])
+  // ⚡ FIX: Empty dependency array + disable linter so it NEVER loops
+  useEffect(() => { 
+    fetchData() 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // ── Manufacture modal ─────────────────────────────────────────────────────
+  // ── Manufacture (Add) Logic ───────────────────────────────────────────────
   const openManufacture = (row: StockRow) => {
     setMfrItem(row)
     const init: Record<string, string> = {}
@@ -108,7 +120,7 @@ export default function InventoryPage() {
       if (stockErr) { alert("Stock update failed: " + stockErr.message); setIsSaving(false); return }
       await supabase.from("stock_ledger").insert({
         item_id: mfrItem.item_id, to_location_id: locationId,
-        quantity: qty, transaction_type: "manufacture", reference_id: null,
+        quantity: qty, transaction_type: "manufacture", reference_id: null, notes: mfrNote || null
       })
     }
 
@@ -117,8 +129,62 @@ export default function InventoryPage() {
     setIsSaving(false)
   }
 
+  // ── Adjustment (Remove) Logic ─────────────────────────────────────────────
+  const openAdjust = (row: StockRow) => {
+    setAdjustItem(row)
+    setAdjustLocation("")
+    setAdjustQty("")
+    setAdjustReason("")
+    setAdjustDate(new Date().toISOString().split("T")[0])
+    setAdjustError(null)
+    setIsAdjustModalOpen(true)
+  }
+
+  const handleAdjustSave = async () => {
+    setAdjustError(null);
+    if (!adjustItem) return;
+    if (!adjustLocation) return setAdjustError("Please select the location.");
+    const qtyToRemove = Number(adjustQty);
+    if (!qtyToRemove || qtyToRemove <= 0) return setAdjustError("Enter a valid quantity to write off.");
+    if (!adjustReason.trim()) return setAdjustError("A reason is mandatory for auditing purposes.");
+
+    const currentStock = adjustItem.stock[adjustLocation] || 0;
+    if (qtyToRemove > currentStock) {
+      return setAdjustError(`You cannot remove ${qtyToRemove} units. Only ${currentStock} are available here.`);
+    }
+
+    setIsAdjusting(true);
+
+    try {
+      // Deduct the stock
+      const { error: stockError } = await supabase.from("stock").upsert(
+        { item_id: adjustItem.item_id, location_id: adjustLocation, quantity: currentStock - qtyToRemove },
+        { onConflict: "item_id, location_id" }
+      );
+      if (stockError) throw stockError;
+
+      // Log it in the Ledger with the Backdate & Reason
+      const { error: ledgerError } = await supabase.from("stock_ledger").insert({
+        item_id: adjustItem.item_id,
+        from_location_id: adjustLocation, 
+        to_location_id: null,             
+        quantity: qtyToRemove,
+        transaction_type: "Adjustment",   
+        notes: adjustReason.trim(),       
+        created_at: new Date(adjustDate).toISOString(), // Uses the date picker!
+      });
+      if (ledgerError) throw ledgerError;
+
+      await fetchData(); 
+      setIsAdjustModalOpen(false);
+    } catch (error: any) {
+      setAdjustError("Adjustment failed: " + error.message);
+    } finally {
+      setIsAdjusting(false);
+    }
+  }
+
   // ── Filtering ─────────────────────────────────────────────────────────────
-  // When a specific location is selected, only keep rows that have stock > 0 there
   const selectedLocId = locationFilter === "All"
     ? null
     : locations.find(l => l.id === locationFilter)?.id ?? null
@@ -127,12 +193,11 @@ export default function InventoryPage() {
     const matchesCat = categoryFilter === "All" || r.category === categoryFilter
     const q = search.toLowerCase()
     const matchesSearch = !q || r.name.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q)
-    // Location filter: only show items that have stock at selected location
     const matchesLoc = !selectedLocId || (r.stock[selectedLocId] || 0) > 0
     return matchesCat && matchesSearch && matchesLoc
   })
 
-  // ── Grouping: category → sub_category → sub_sub_category ─────────────────
+  // ── Grouping ──────────────────────────────────────────────────────────────
   type L3 = Record<string, StockRow[]>
   type L2 = Record<string, L3>
   type L1 = Record<string, L2>
@@ -141,24 +206,20 @@ export default function InventoryPage() {
   filtered.forEach(r => {
     const cat = r.category
     const sub = r.sub_category || "General"
-    const ssc = r.sub_sub_category || ""    // empty string = no sub_sub level
+    const ssc = r.sub_sub_category || ""
     if (!grouped[cat]) grouped[cat] = {}
     if (!grouped[cat][sub]) grouped[cat][sub] = {}
     if (!grouped[cat][sub][ssc]) grouped[cat][sub][ssc] = []
     grouped[cat][sub][ssc].push(r)
   })
 
-  // ── Location summary totals ───────────────────────────────────────────────
   const locationTotals: Record<string, number> = {}
-  rows.forEach(r => {     // always use ALL rows for summary cards, not filtered
+  rows.forEach(r => {
     locations.forEach(l => {
       locationTotals[l.id] = (locationTotals[l.id] || 0) + (r.stock[l.id] || 0)
     })
   })
 
-  // Columns to show in the table
-  // When a location is selected → show only that column + Total
-  // When All → show all location columns + Total
   const visibleLocations = selectedLocId
     ? locations.filter(l => l.id === selectedLocId)
     : locations
@@ -170,7 +231,7 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Inventory</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Live stock across all locations · Add manufactured stock</p>
+          <p className="text-sm text-slate-500 mt-0.5">Live stock across all locations · Add or Remove stock</p>
         </div>
         <div className="flex items-center gap-3">
           <Link href="/inventory/ledger" className="flex items-center gap-2 px-4 py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 rounded-lg text-sm font-bold shadow-sm transition-colors">
@@ -183,10 +244,8 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* ── Location tabs (summary cards that also act as filters) ── */}
+      {/* ── Location tabs ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-
-        {/* All locations card */}
         <button
           onClick={() => setLocationFilter("All")}
           className={`rounded-xl border p-4 text-center transition-all shadow-sm ${
@@ -195,17 +254,16 @@ export default function InventoryPage() {
               : "bg-white border-slate-200 hover:border-slate-300 text-slate-700"
           }`}
         >
-          <p className={`text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1 mb-1 ${locationFilter === "All" ? "text-slate-400" : "text-slate-400"}`}>
+          <p className={`text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1 mb-1 text-slate-400`}>
             <MapPin className="h-3 w-3" /> All Locations
           </p>
           <p className={`font-bold text-sm leading-tight ${locationFilter === "All" ? "text-white" : "text-slate-700"}`}>Combined</p>
           <p className={`text-2xl font-black mt-1 ${locationFilter === "All" ? "text-blue-300" : "text-blue-600"}`}>
             {Object.values(locationTotals).reduce((a, b) => a + b, 0).toLocaleString()}
           </p>
-          <p className={`text-[10px] mt-0.5 ${locationFilter === "All" ? "text-slate-400" : "text-slate-400"}`}>total units</p>
+          <p className={`text-[10px] mt-0.5 text-slate-400`}>total units</p>
         </button>
 
-        {/* Per-location cards */}
         {locations.map(loc => {
           const isActive = locationFilter === loc.id
           return (
@@ -218,20 +276,19 @@ export default function InventoryPage() {
                   : "bg-white border-slate-200 hover:border-blue-300 hover:shadow-md"
               }`}
             >
-              <p className={`text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1 mb-1 ${isActive ? "text-slate-400" : "text-slate-400"}`}>
+              <p className={`text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1 mb-1 text-slate-400`}>
                 <MapPin className="h-3 w-3" />{loc.type}
               </p>
               <p className={`font-bold text-sm leading-tight ${isActive ? "text-white" : "text-slate-700"}`}>{loc.name}</p>
               <p className={`text-2xl font-black mt-1 ${isActive ? "text-blue-300" : "text-blue-600"}`}>
                 {(locationTotals[loc.id] || 0).toLocaleString()}
               </p>
-              <p className={`text-[10px] mt-0.5 ${isActive ? "text-slate-400" : "text-slate-400"}`}>units in stock</p>
+              <p className={`text-[10px] mt-0.5 text-slate-400`}>units in stock</p>
             </button>
           )
         })}
       </div>
 
-      {/* Active location banner */}
       {selectedLocId && (
         <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
           <div className="flex items-center gap-2">
@@ -288,7 +345,6 @@ export default function InventoryPage() {
         Object.entries(grouped).map(([catName, subGroups]) => (
           <div key={catName} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
 
-            {/* Category header */}
             <div className="bg-slate-800 text-white px-5 py-3 flex items-center justify-between">
               <h3 className="font-bold text-sm uppercase tracking-wider">{catName}</h3>
               <span className="text-xs text-slate-400">
@@ -299,7 +355,6 @@ export default function InventoryPage() {
             {Object.entries(subGroups).map(([subCatName, sscGroups]) => (
               <div key={subCatName}>
 
-                {/* Sub-category header */}
                 <div className="bg-slate-50 border-b border-slate-200 px-5 py-2.5 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">{subCatName}</span>
                   <span className="text-[10px] text-slate-400">
@@ -309,8 +364,6 @@ export default function InventoryPage() {
 
                 {Object.entries(sscGroups).map(([sscName, items]) => (
                   <div key={sscName}>
-
-                    {/* Sub-sub-category header (only shown if it exists) */}
                     {sscName && (
                       <div className="bg-white border-b border-slate-100 px-6 py-2 flex items-center gap-2">
                         <div className="w-1 h-4 bg-blue-400 rounded-full" />
@@ -328,23 +381,26 @@ export default function InventoryPage() {
                                 {l.name}
                               </th>
                             ))}
-                            {/* Show Total column only in "All" mode */}
                             {!selectedLocId && (
                               <th className="text-right px-4 py-2.5 font-bold text-blue-600 uppercase whitespace-nowrap">Total</th>
                             )}
-                            <th className="px-4 py-2.5 text-center font-bold text-slate-500 uppercase whitespace-nowrap">+ Stock</th>
+                            <th className="px-4 py-2.5 text-center font-bold text-slate-500 uppercase whitespace-nowrap">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                           {items.map(row => {
-                            const locQty = selectedLocId ? (row.stock[selectedLocId] || 0) : null
                             return (
                               <tr key={row.item_id} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-5 py-3">
-                                  <p className="font-semibold text-slate-800 leading-tight">{row.name}</p>
-                                  <p className="text-slate-400 font-mono text-[10px] mt-0.5">
-                                    {row.sku} · Pack {row.pack_size}
-                                  </p>
+                                  <Link 
+                                    href={`/inventory/ledger?itemId=${row.item_id}`} 
+                                    className="font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                  >
+                                    <p className="font-semibold text-slate-800 leading-tight">{row.name}</p>
+                                    <p className="text-slate-400 font-mono text-[10px] mt-0.5">
+                                      {row.sku} · Pack {row.pack_size}
+                                    </p>
+                                  </Link>
                                 </td>
 
                                 {visibleLocations.map(l => {
@@ -361,23 +417,31 @@ export default function InventoryPage() {
                                   )
                                 })}
 
-                                {/* Total (all-locations mode only) */}
                                 {!selectedLocId && (
                                   <td className="px-4 py-3 text-right font-black text-blue-600">{row.total}</td>
                                 )}
 
+                                {/* ── ACTION BUTTONS ── */}
                                 <td className="px-4 py-3 text-center">
-                                  <button onClick={() => openManufacture(row)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold text-[10px] transition-colors mx-auto">
-                                    <Plus className="h-3 w-3" /> Add
-                                  </button>
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button onClick={() => openManufacture(row)}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold text-[10px] transition-colors"
+                                      title="Add Manufactured Stock">
+                                      <Plus className="h-3 w-3" /> Add
+                                    </button>
+                                    <button onClick={() => openAdjust(row)}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg font-bold text-[10px] transition-colors"
+                                      title="Remove / Adjust Missing Stock">
+                                      <Minus className="h-3 w-3" /> Remove
+                                    </button>
+                                  </div>
                                 </td>
+                                
                               </tr>
                             )
                           })}
                         </tbody>
 
-                        {/* Sub-totals footer row per table */}
                         <tfoot className="border-t-2 border-slate-200 bg-slate-50">
                           <tr>
                             <td className="px-5 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
@@ -406,21 +470,21 @@ export default function InventoryPage() {
         ))
       )}
 
-      {/* ── Manufacture Modal ── */}
+      {/* ── Manufacture (Add) Modal ── */}
       {isModalOpen && mfrItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-green-50">
               <div>
                 <h2 className="font-bold text-slate-800 flex items-center gap-2">
-                  <Plus className="h-5 w-5 text-green-600" /> Add Manufactured Stock
+                  <Plus className="h-5 w-5 text-green-600" /> Add Stock
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">{mfrItem.name} · <span className="font-mono">{mfrItem.sku}</span></p>
               </div>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-red-500"><X className="h-5 w-5" /></button>
             </div>
             <div className="p-5 space-y-4">
-              <p className="text-xs text-slate-500 font-semibold">Enter quantity produced at each location:</p>
+              <p className="text-xs text-slate-500 font-semibold">Enter quantity to ADD at each location:</p>
               {locations.map(loc => (
                 <div key={loc.id} className="flex items-center justify-between gap-4">
                   <div className="flex-1">
@@ -453,12 +517,105 @@ export default function InventoryPage() {
               <button onClick={handleSave} disabled={isSaving}
                 className="flex-[2] py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                {isSaving ? "Saving…" : "Add to Stock"}
+                {isSaving ? "Saving…" : "Add Stock"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Adjustment (Remove) Modal ── */}
+      {isAdjustModalOpen && adjustItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-slate-200 bg-orange-50 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-orange-800 text-lg flex items-center gap-2">
+                  <Minus className="h-5 w-5 text-orange-600" /> Remove Stock
+                </h3>
+                <p className="text-xs text-orange-600 mt-0.5">Write-off missing stock or correct past balances.</p>
+              </div>
+              <button onClick={() => setIsAdjustModalOpen(false)}><X className="h-5 w-5 text-orange-400 hover:text-orange-600"/></button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {adjustError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg font-semibold">
+                  {adjustError}
+                </div>
+              )}
+
+              <div>
+                <p className="font-bold text-slate-800">{adjustItem.name}</p>
+                <p className="text-xs font-mono text-slate-400">{adjustItem.sku}</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">From Location *</label>
+                <select 
+                  value={adjustLocation} 
+                  onChange={e => setAdjustLocation(e.target.value)}
+                  className="w-full p-2.5 border rounded-lg outline-none focus:border-orange-500 font-semibold text-sm bg-white"
+                >
+                  <option value="">Select Location...</option>
+                  {locations.map(loc => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name} (Available: {adjustItem.stock[loc.id] || 0})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Qty to Remove *</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    value={adjustQty} 
+                    onChange={e => setAdjustQty(e.target.value)}
+                    className="w-full p-2.5 border rounded-lg outline-none focus:border-orange-500 font-bold text-sm text-red-600"
+                    placeholder="e.g. 5"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block flex items-center gap-1">
+                    <Calendar className="h-3 w-3" /> Date
+                  </label>
+                  <input 
+                    type="date" 
+                    value={adjustDate} 
+                    onChange={e => setAdjustDate(e.target.value)}
+                    className="w-full p-2.5 border rounded-lg outline-none focus:border-orange-500 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Reason for Write-off *</label>
+                <input 
+                  type="text" 
+                  value={adjustReason} 
+                  onChange={e => setAdjustReason(e.target.value)}
+                  className="w-full p-2.5 border rounded-lg outline-none focus:border-orange-500 text-sm"
+                  placeholder="e.g. Correction to Opening Balance"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-slate-200 bg-slate-50 flex gap-3">
+              <button onClick={() => setIsAdjustModalOpen(false)} className="flex-1 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100">
+                Cancel
+              </button>
+              <button onClick={handleAdjustSave} disabled={isAdjusting} className="flex-[2] py-2.5 bg-orange-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                {isAdjusting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {isAdjusting ? "Updating..." : "Confirm Removal"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
