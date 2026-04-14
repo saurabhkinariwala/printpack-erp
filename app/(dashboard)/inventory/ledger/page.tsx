@@ -10,17 +10,16 @@ type Location = { id: string; name: string }
 type Item = { id: string; name: string; sku: string }
 type LedgerEntry = {
   id: string;
-  created_at: string;
+  transaction_date: string; // ⚡ FIX: Using new DB column
+  created_at: string;       // Keeping for fallback/audit
   transaction_type: string;
   quantity: number;
-  notes: string | null;          // <-- Now safely accepts null
+  notes: string | null;          
   vehicle_number: string | null;
   from_location_id: string | null;
   to_location_id: string | null;
-  from_loc?: { name: string } | null; // <-- Now safely accepts null
-  to_loc?: { name: string } | null;   // <-- Now safely accepts null
-  
-  // Calculated fields for the UI
+  from_loc?: { name: string } | null;
+  to_loc?: { name: string } | null; 
   qtyIn: number;
   qtyOut: number;
   runningBalance: number;
@@ -28,16 +27,12 @@ type LedgerEntry = {
 
 export default function ItemLedgerPage() {
   const supabase = createClient()
-
   const searchParams = useSearchParams()
 
   const [isLoading, setIsLoading] = useState(true)
   const [isFetchingData, setIsFetchingData] = useState(false)
-  
   const [locations, setLocations] = useState<Location[]>([])
   const [items, setItems] = useState<Item[]>([])
-  
-  // Filters
   const [search, setSearch] = useState("")
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -45,13 +40,11 @@ export default function ItemLedgerPage() {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null)
   const [selectedLocation, setSelectedLocation] = useState<string>("All")
   
-  // Default to Last 7 Days
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0];
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0];
   })
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0])
 
-  // Ledger Data
   const [entries, setEntries] = useState<LedgerEntry[]>([])
   const [openingBalance, setOpeningBalance] = useState(0)
   const [closingBalance, setClosingBalance] = useState(0)
@@ -66,18 +59,15 @@ export default function ItemLedgerPage() {
       const { data: itemData } = await supabase.from('items').select('id, name, sku').order('name');
       if (itemData) {
         setItems(itemData);
-        
-        // ⚡ THE MAGIC: Check the URL for an itemId, and auto-select it if it exists!
         const urlItemId = searchParams.get('itemId');
         if (urlItemId) {
           const preselected = itemData.find(item => item.id === urlItemId);
           if (preselected) {
             setSelectedItem(preselected);
-            setSearch(`${preselected.name} (${preselected.sku})`); // Auto-fill the search bar too!
+            setSearch(`${preselected.name} (${preselected.sku})`); 
           }
         }
       }
-
       setIsLoading(false);
     }
     fetchInitialData();
@@ -87,7 +77,7 @@ export default function ItemLedgerPage() {
     }
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [supabase])
+  }, [supabase, searchParams])
 
   // ── THE FINANCIAL ENGINE: Calculate Opening Balance & Ledger ──
   useEffect(() => {
@@ -96,24 +86,40 @@ export default function ItemLedgerPage() {
     async function generateLedger() {
       setIsFetchingData(true);
 
-      // 1. Calculate OPENING BALANCE (All transactions STRICTLY BEFORE start date)
+      // ⚡ FIX: Calculate Absolute Current Stock (To guarantee it matches Inventory Page exactly)
+      const { data: absoluteStockData } = await supabase
+        .from('stock')
+        .select('location_id, quantity')
+        .eq('item_id', selectedItem?.id);
+
+      let absoluteTotal = 0;
+      if (absoluteStockData) {
+        if (selectedLocation === "All") {
+          absoluteTotal = absoluteStockData.reduce((sum, s) => sum + s.quantity, 0);
+        } else {
+          const locStock = absoluteStockData.find(s => s.location_id === selectedLocation);
+          absoluteTotal = locStock ? locStock.quantity : 0;
+        }
+      }
+      // The Closing Balance is now permanently anchored to physical reality
+      setClosingBalance(absoluteTotal);
+
+      // 1. Calculate OPENING BALANCE (Using the new transaction_date column!)
       const { data: pastData } = await supabase
         .from('stock_ledger')
         .select('quantity, transaction_type, from_location_id, to_location_id')
         .eq('item_id', selectedItem?.id)
-        .lt('created_at', startDate + "T00:00:00");
+        .lt('transaction_date', startDate + "T00:00:00");
 
       let openBal = 0;
       if (pastData) {
         pastData.forEach(row => {
           if (selectedLocation === "All") {
-            // Company-wide logic
-            if (row.to_location_id && !row.from_location_id) openBal += row.quantity; // Manufacture/Refund
-            else if (row.from_location_id && !row.to_location_id) openBal -= row.quantity; // Sale/Loss
+            if (row.to_location_id && !row.from_location_id) openBal += row.quantity; 
+            else if (row.from_location_id && !row.to_location_id) openBal -= row.quantity; 
             else if (row.transaction_type?.toLowerCase() === 'sale') openBal -= row.quantity;
             else if (row.transaction_type?.toLowerCase() === 'refund') openBal += row.quantity;
           } else {
-            // Specific Location logic
             if (row.to_location_id === selectedLocation) openBal += row.quantity;
             if (row.from_location_id === selectedLocation) openBal -= row.quantity;
           }
@@ -121,18 +127,18 @@ export default function ItemLedgerPage() {
       }
       setOpeningBalance(openBal);
 
-      // 2. Fetch LEDGER ENTRIES (Within date range, ordered chronologically)
+      // 2. Fetch LEDGER ENTRIES (Filtered and Ordered by the new transaction_date column!)
       const { data: currentData } = await supabase
         .from('stock_ledger')
         .select(`
-          id, created_at, transaction_type, quantity, notes, vehicle_number, from_location_id, to_location_id,
+          id, transaction_date, created_at, transaction_type, quantity, notes, vehicle_number, from_location_id, to_location_id,
           from_loc:locations!from_location_id(name),
           to_loc:locations!to_location_id(name)
         `)
         .eq('item_id', selectedItem?.id)
-        .gte('created_at', startDate + "T00:00:00")
-        .lte('created_at', endDate + "T23:59:59")
-        .order('created_at', { ascending: true }); // Chronological order is critical!
+        .gte('transaction_date', startDate + "T00:00:00")
+        .lte('transaction_date', endDate + "T23:59:59")
+        .order('transaction_date', { ascending: true }); // Crucial for chronological math
 
       let runningBal = openBal;
       let tIn = 0;
@@ -150,16 +156,12 @@ export default function ItemLedgerPage() {
             else if (row.from_location_id && !row.to_location_id) qOut = row.quantity; 
             else if (row.transaction_type?.toLowerCase() === 'sale') qOut = row.quantity;
             else if (row.transaction_type?.toLowerCase() === 'refund') qIn = row.quantity;
-            else if (row.transaction_type?.toLowerCase() === 'transfer') {
-              // Internal transfer doesn't change company-wide total, but we still show it in the ledger!
-              qIn = 0; qOut = 0;
-            }
+            else if (row.transaction_type?.toLowerCase() === 'transfer') { qIn = 0; qOut = 0; }
           } else {
             if (row.to_location_id === selectedLocation) qIn = row.quantity;
             if (row.from_location_id === selectedLocation) qOut = row.quantity;
           }
 
-          // If a row has no impact on the current view (e.g. transfer between two other godowns), skip displaying it
           if (qIn === 0 && qOut === 0 && row.transaction_type?.toLowerCase() !== 'transfer') return;
           if (selectedLocation !== "All" && qIn === 0 && qOut === 0) return;
 
@@ -168,9 +170,9 @@ export default function ItemLedgerPage() {
           tIn += qIn;
           tOut += qOut;
 
-          // Replace the old processedEntries.push block with this:
           processedEntries.push({
             id: row.id,
+            transaction_date: row.transaction_date, // ⚡ Capture the new date
             created_at: row.created_at,
             transaction_type: row.transaction_type,
             quantity: row.quantity,
@@ -187,9 +189,7 @@ export default function ItemLedgerPage() {
         });
       }
 
-      // Reverse array so newest is at the top of the table
       setEntries(processedEntries.reverse());
-      setClosingBalance(runningBal);
       setTotalIn(tIn);
       setTotalOut(tOut);
       setIsFetchingData(false);
@@ -200,25 +200,24 @@ export default function ItemLedgerPage() {
 
 
   // ── Excel Export ──
- // ── Excel Export ──
   const handleExportExcel = () => {
     if (!selectedItem) return alert("Please select an item first.");
 
     const headers = ["Date", "Transaction Type", "Route", "Vehicle / Notes", "Qty IN (+)", "Qty OUT (-)", "Running Balance"];
     
-    // ⚡ FIX 1: Wrap the opening balance in an array and join it with a comma
     const csvData = [
       [`"${startDate}"`, `"OPENING BALANCE"`, `""`, `""`, `""`, `""`, openingBalance].join(",")
     ];
 
-    // Add Transactions (We reverse them back so Excel flows chronologically downwards)
     [...entries].reverse().forEach(e => {
       const route = e.from_loc || e.to_loc ? `${e.from_loc?.name || 'External'} -> ${e.to_loc?.name || 'External'}` : e.transaction_type;
       const notes = [e.vehicle_number, e.notes].filter(Boolean).join(" | ");
       
-      // ⚡ FIX 2: Wrap the pushed elements in an array and join them with a comma
+      // ⚡ FIX: Use transaction_date for export to match UI precisely
+      const displayDate = e.transaction_date || e.created_at;
+
       csvData.push([
-        `"${new Date(e.created_at).toLocaleString()}"`,
+        `"${new Date(displayDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}"`,
         `"${e.transaction_type}"`,
         `"${route}"`,
         `"${notes.replace(/"/g, '""')}"`,
@@ -228,7 +227,6 @@ export default function ItemLedgerPage() {
       ].join(","));
     });
 
-    // ⚡ FIX 3: Wrap the closing balance row as well
     csvData.push([`"${endDate}"`, `"CLOSING BALANCE"`, `""`, `""`, totalIn, totalOut, closingBalance].join(","));
 
     const csvString = [headers.join(","), ...csvData].join("\n");
@@ -242,7 +240,6 @@ export default function ItemLedgerPage() {
     link.click();
     document.body.removeChild(link);
   };
-
 
   const filteredItems = items.filter(item => 
     item.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -275,7 +272,6 @@ export default function ItemLedgerPage() {
       {/* ── Filters Card ── */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          
           <div className="md:col-span-2 relative" ref={searchRef}>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Select Product *</label>
             <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
@@ -320,13 +316,11 @@ export default function ItemLedgerPage() {
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-xs font-bold text-slate-700 shadow-sm" />
             </div>
           </div>
-
         </div>
       </div>
 
       {selectedItem ? (
         <div className="space-y-6">
-          
           {/* ── Summary Strip ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-slate-800 text-white rounded-xl p-5 shadow-sm">
@@ -369,48 +363,52 @@ export default function ItemLedgerPage() {
                   {entries.length === 0 ? (
                     <tr><td colSpan={6} className="py-16 text-center text-slate-400 font-medium">No transactions found for this date range.</td></tr>
                   ) : (
-                    entries.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-5 whitespace-nowrap">
-                          <p className="font-semibold text-slate-800">{new Date(entry.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
-                          <p className="text-[10px] text-slate-400 font-mono mt-0.5">{new Date(entry.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
-                        </td>
-                        <td className="py-3 px-5">
-                          <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            entry.transaction_type?.toLowerCase() === 'sale' ? 'bg-red-100 text-red-700' :
-                            entry.transaction_type?.toLowerCase() === 'manufacture' ? 'bg-green-100 text-green-700' :
-                            entry.transaction_type?.toLowerCase() === 'transfer' ? 'bg-blue-100 text-blue-700' :
-                            'bg-slate-100 text-slate-700'
-                          }`}>
-                            {entry.transaction_type}
-                          </span>
-                        </td>
-                        <td className="py-3 px-5">
-                          {(entry.from_loc || entry.to_loc) && (
-                             <div className="flex items-center gap-1.5 text-xs mb-1">
-                               <span className="font-semibold text-slate-600">{entry.from_loc?.name || 'External'}</span>
-                               <ArrowRight className="w-3 h-3 text-slate-300"/>
-                               <span className="font-semibold text-slate-800">{entry.to_loc?.name || 'External'}</span>
-                             </div>
-                          )}
-                          {(entry.notes || entry.vehicle_number) && (
-                            <p className="text-[10px] text-slate-500 font-mono">
-                              {entry.vehicle_number && <span className="bg-slate-200 text-slate-700 px-1.5 rounded mr-2">{entry.vehicle_number}</span>}
-                              {entry.notes}
-                            </p>
-                          )}
-                        </td>
-                        <td className="py-3 px-5 text-center font-black text-green-600 bg-green-50/10">
-                          {entry.qtyIn > 0 ? `+${entry.qtyIn}` : '-'}
-                        </td>
-                        <td className="py-3 px-5 text-center font-black text-red-500 bg-red-50/10">
-                          {entry.qtyOut > 0 ? `-${entry.qtyOut}` : '-'}
-                        </td>
-                        <td className="py-3 px-5 text-right font-black text-slate-800 bg-slate-50/50 text-base">
-                          {entry.runningBalance}
-                        </td>
-                      </tr>
-                    ))
+                    entries.map((entry) => {
+                      // ⚡ FIX: Use transaction_date for UI display
+                      const displayDate = entry.transaction_date || entry.created_at;
+                      return (
+                        <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-5 whitespace-nowrap">
+                            <p className="font-semibold text-slate-800">{new Date(displayDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">{new Date(displayDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
+                          </td>
+                          <td className="py-3 px-5">
+                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              entry.transaction_type?.toLowerCase() === 'sale' ? 'bg-red-100 text-red-700' :
+                              entry.transaction_type?.toLowerCase() === 'manufacture' ? 'bg-green-100 text-green-700' :
+                              entry.transaction_type?.toLowerCase() === 'transfer' ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {entry.transaction_type}
+                            </span>
+                          </td>
+                          <td className="py-3 px-5">
+                            {(entry.from_loc || entry.to_loc) && (
+                               <div className="flex items-center gap-1.5 text-xs mb-1">
+                                 <span className="font-semibold text-slate-600">{entry.from_loc?.name || 'External'}</span>
+                                 <ArrowRight className="w-3 h-3 text-slate-300"/>
+                                 <span className="font-semibold text-slate-800">{entry.to_loc?.name || 'External'}</span>
+                               </div>
+                            )}
+                            {(entry.notes || entry.vehicle_number) && (
+                              <p className="text-[10px] text-slate-500 font-mono">
+                                {entry.vehicle_number && <span className="bg-slate-200 text-slate-700 px-1.5 rounded mr-2">{entry.vehicle_number}</span>}
+                                {entry.notes}
+                              </p>
+                            )}
+                          </td>
+                          <td className="py-3 px-5 text-center font-black text-green-600 bg-green-50/10">
+                            {entry.qtyIn > 0 ? `+${entry.qtyIn}` : '-'}
+                          </td>
+                          <td className="py-3 px-5 text-center font-black text-red-500 bg-red-50/10">
+                            {entry.qtyOut > 0 ? `-${entry.qtyOut}` : '-'}
+                          </td>
+                          <td className="py-3 px-5 text-right font-black text-slate-800 bg-slate-50/50 text-base">
+                            {entry.runningBalance}
+                          </td>
+                        </tr>
+                      )
+                    })
                   )}
                 </tbody>
               </table>
@@ -424,7 +422,6 @@ export default function ItemLedgerPage() {
           <p className="text-sm text-slate-400 mt-1">Search by name or SKU above to load the complete audit trail.</p>
         </div>
       )}
-
     </div>
   )
 }

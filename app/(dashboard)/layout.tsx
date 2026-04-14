@@ -7,7 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard, Package, ShoppingCart, Users, ArrowRightLeft,
   Menu, X, Box, ChevronDown, ChevronRight,
-  FolderOpen, Loader2, ImageIcon, Tag, CreditCard, Truck, Bell, Receipt, Settings
+  FolderOpen, Loader2, ImageIcon, Tag, CreditCard, Truck, Bell, Receipt, Settings,
+  FileText
 } from "lucide-react";
 import LogoutButton from "@/components/ui/LogoutButton"
 import { AuthProvider, useAuth } from "@/context/AuthContext"
@@ -80,6 +81,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 const supabase = createClient();
+const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
 
   // We bring in useAuth to use the hasPermission function safely!
   const { hasPermission } = useAuth();
@@ -124,9 +126,10 @@ const supabase = createClient();
     ...(canViewOrders   ? [{ name: "Orders",           href: "/orders",    icon: ShoppingCart }] : []),
     ...(canViewDispatch ? [{ name: "Dispatch Register",href: "/dispatch",  icon: Truck }] : []),
     { name: "Payments",         href: "/payments",  icon: CreditCard      },
-    { name: "Customers",        href: "/customers", icon: Users           },
+    ...(!isPackArt ? [{ name: "Customers",        href: "/customers", icon: Users           }] : []),
     { name: "Inventory",        href: "/inventory", icon: Package         },
-    { name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  },
+    ...(!isPackArt ? [{ name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  }] : []),
+    ...(isPackArt ? [{ name: "Inwards Register", href: "/inwards",   icon: FileText        }] : []),
     { name: "Product Gallery",  href: "/gallery",   icon: ImageIcon       },
     // Gate the Roles page!
     ...(canManageRoles  ? [{ name: "Roles",            href: "/settings/roles", icon: Settings }] : []),
@@ -306,6 +309,7 @@ function BreadcrumbTitle({ pathname }: { pathname: string }) {
     "/customers": "Customer Ledger",
     "/inventory": "Inventory",
     "/transfers": "Stock Transfers",
+    "/inwards":   "Inwards Register",
     "/gallery":   "Product Gallery",
     "/settings/roles":  "Roles",
   }
