@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, Trash2, Calendar, User, IndianRupee, Save, Loader2, Receipt, ArrowLeft } from "lucide-react"
+import { Search, Plus, Trash2, Calendar, User, IndianRupee, Save, Loader2, Receipt, ArrowLeft, FileText } from "lucide-react"
 import Link from "next/link"
 
 type CatalogItem = {
@@ -33,6 +33,7 @@ export default function CashMemoPage() {
   const [memoDate, setMemoDate] = useState(new Date().toISOString().split('T')[0])
   const [customerName, setCustomerName] = useState("")
   const [customerMobile, setCustomerMobile] = useState("")
+  const [narration, setNarration] = useState("") // ⚡ NEW: Narration state
 
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
   const [searchTerm, setSearchTerm] = useState("")
@@ -50,7 +51,6 @@ export default function CashMemoPage() {
       const { data: locData } = await supabase.from('locations').select('id').ilike('name', '%Office%').limit(1).single();
       const officeId = locData?.id;
 
-      // Fix #4: Fetch pack_size
       const { data: itemsData } = await supabase.from('items').select(`id, name, sku, price, gst_rate, pack_size, stock ( quantity, location_id )`)
       
       if (itemsData && officeId) {
@@ -59,7 +59,7 @@ export default function CashMemoPage() {
           return {
             id: item.id, name: item.name, sku: item.sku, 
             price: Number(item.price) || 0, gst_rate: Number(item.gst_rate) || 18,
-            pack_size: item.pack_size || 1, // Default to 1 if no pack size
+            pack_size: item.pack_size || 1,
             available_qty: officeStock ? officeStock.quantity : 0
           }
         });
@@ -83,7 +83,6 @@ export default function CashMemoPage() {
     if (existing) {
       setCart(cart.map(c => c.id === item.id ? { ...c, cart_qty: c.cart_qty + item.pack_size } : c))
     } else {
-      // Fix #4: Default to pack size
       setCart([...cart, { ...item, cart_qty: item.pack_size }])
     }
     setSearchTerm("")
@@ -98,11 +97,10 @@ export default function CashMemoPage() {
     setPayments(newPayments)
   }
   const removePayment = (index: number) => setPayments(payments.filter((_, i) => i !== index))
- 
-  // --- MATH FIXES (#2) ---
+
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.cart_qty), 0)
   const gstTotal = isGstApplied ? cart.reduce((sum, item) => sum + ((item.price * item.cart_qty * item.gst_rate) / 100), 0) : 0
-  const grandTotal = Math.round(subtotal + gstTotal - discountAmount) // Final amount is rounded to nearest rupee
+  const grandTotal = Math.round(subtotal + gstTotal - discountAmount)
   
   const amountPaidNumber = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0)
   const balance = grandTotal - amountPaidNumber;
@@ -115,7 +113,8 @@ export default function CashMemoPage() {
 
     const payload = {
       customer: { name: customerName || "Walk-in Customer", mobile: customerMobile },
-      memo: { memo_date: memoDate, is_gst_applied: isGstApplied, discount_value: discountAmount.toString(), total_amount: grandTotal },
+      // ⚡ NEW: Added narration to the payload
+      memo: { memo_date: memoDate, is_gst_applied: isGstApplied, discount_value: discountAmount.toString(), total_amount: grandTotal, narration: narration },
       items: cart.map(item => ({ id: item.id, quantity: item.cart_qty, price: item.price, gst_rate: item.gst_rate })),
       payments: payments.filter(p => Number(p.amount) > 0).map(p => ({ amount: Number(p.amount), payment_mode: p.mode, payment_date: p.date }))
     }
@@ -126,7 +125,7 @@ export default function CashMemoPage() {
       alert("Checkout Failed: " + error.message)
     } else {
       alert("Cash Memo Generated Successfully!")
-      window.location.href = '/cash-memo' // Redirect to list
+      window.location.href = '/cash-memo' 
     }
     setIsSubmitting(false)
   }
@@ -143,7 +142,6 @@ export default function CashMemoPage() {
              <div>
                <div className="flex items-center gap-3">
                  <h1 className="text-2xl font-black text-slate-800 flex items-center gap-2">New Cash Memo</h1>
-                 {/* Explicit Auto-Generated Badge */}
                  <span className="bg-purple-100 text-purple-700 border border-purple-200 text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-widest flex items-center gap-1">
                    <Receipt className="w-3 h-3"/> Auto-Numbered
                  </span>
@@ -169,6 +167,13 @@ export default function CashMemoPage() {
               <input type="text" placeholder="Mobile Number" value={customerMobile} onChange={e => setCustomerMobile(e.target.value)} className="w-full outline-none text-sm font-medium"/>
             </div>
           </div>
+          
+          {/* ⚡ NEW: Narration Field */}
+          <div className="flex items-center gap-3 border border-slate-200 rounded-xl px-4 py-3 focus-within:border-blue-500">
+            <FileText className="w-5 h-5 text-slate-400"/>
+            <input type="text" placeholder="Narration / Notes (Optional)" value={narration} onChange={e => setNarration(e.target.value)} className="w-full outline-none text-sm font-medium"/>
+          </div>
+
           <hr className="border-slate-100" />
           <div className="relative" ref={searchRef}>
             <div className="flex items-center gap-3 bg-blue-50 border-2 border-blue-100 rounded-xl px-4 py-3 focus-within:border-blue-500 transition-colors">
@@ -210,7 +215,6 @@ export default function CashMemoPage() {
                     <td className="p-4"><p className="text-sm font-bold text-slate-800">{item.name}</p></td>
                     <td className="p-4"><input type="number" value={item.price} onChange={e => setCart(cart.map(c => c.id === item.id ? { ...c, price: Number(e.target.value) } : c))} className="w-full border border-slate-200 rounded p-1 text-sm outline-none focus:border-blue-500"/></td>
                     <td className="p-4 flex justify-center items-center gap-2"><input type="number" value={item.cart_qty} min="1" onChange={e => setCart(cart.map(c => c.id === item.id ? { ...c, cart_qty: parseInt(e.target.value) || 1 } : c))} className="w-16 text-center border border-slate-200 rounded p-1 text-sm font-bold outline-none focus:border-blue-500"/></td>
-                    {/* Fix #2: .toFixed(2) prevents floating point explosion */}
                     <td className="p-4 text-right font-black text-slate-700">₹{Number((item.price * item.cart_qty).toFixed(2))}</td>
                     <td className="p-4 text-right"><button onClick={() => setCart(cart.filter(c => c.id !== item.id))} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50"><Trash2 className="w-4 h-4"/></button></td>
                   </tr>
@@ -247,7 +251,6 @@ export default function CashMemoPage() {
               <button onClick={addPaymentSplit} className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"><Plus className="w-3 h-3"/> Split Payment</button>
             </div>
             
-            {/* Fix #5: Dynamic Payment Rows */}
             {payments.map((payment, index) => (
               <div key={index} className="flex flex-col gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div className="flex items-center gap-2">

@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
-import { User, Receipt, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, History, CheckCircle, ImageIcon } from "lucide-react"
+import { User, Receipt, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, History, CheckCircle, ImageIcon, FileText } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
 export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,7 +36,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
 
     setMemo(memoData);
 
-    // Fetch the version history!
     const { data: versionData } = await supabase
       .from('cash_memo_versions')
       .select('id, version_number, created_at, snapshot_data')
@@ -65,7 +64,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
   if (dbError) return <div className="p-20 text-center text-red-600 font-bold bg-red-50 border border-red-200 m-10 rounded-xl">Database Error: {dbError}</div>;
   if (!memo) return <div className="p-20 text-center text-red-500 font-bold">Cash Memo not found.</div>;
 
-  // ⚡ THE TIME MACHINE TOGGLE
   const displayData = selectedVersion ? selectedVersion.snapshot_data : memo;
   const isHistorical = !!selectedVersion;
 
@@ -78,7 +76,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
   let gstTotal = 0;
   if (displayData.is_gst_applied) {
     displayData.cash_memo_items?.forEach((item: any) => {
-      // Calculate proportional discount for this line item to find true taxable amount
       const lineDiscount = subtotal > 0 ? (item.unit_price * item.quantity) / subtotal * discountAmt : 0;
       const lineTaxable = (item.unit_price * item.quantity) - lineDiscount;
       gstTotal += lineTaxable * ((item.gst_rate || 18) / 100);
@@ -113,7 +110,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
                   {balanceDue === 0 ? 'Fully Paid' : 'Pending Balance'}
                 </span>
                 
-                {/* ⚡ THE VERSION BADGE */}
                 {isHistorical && <span className="px-2.5 py-1 bg-purple-100 text-purple-800 border border-purple-200 rounded-full text-[10px] font-black uppercase flex items-center gap-1"><History className="w-3 h-3" /> Viewing V{selectedVersion.version_number}</span>}
               </div>
               <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2"><Calendar className="w-4 h-4" /> {new Date(displayData.memo_date).toLocaleDateString('en-IN', { dateStyle: 'long' })}</p>
@@ -121,8 +117,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
           </div>
 
           <div className="flex items-center gap-3">
-            
-            {/* ⚡ THE VERSION DROPDOWN */}
             {versions.length > 0 && (
               <select
                 value={selectedVersion ? selectedVersion.id : "current"}
@@ -137,7 +131,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
               </select>
             )}
 
-            {/* Hide Edit/Delete if viewing an old version */}
             {!isHistorical && (
               <>
                 {hasPermission('edit_cash_memos') && (
@@ -160,10 +153,22 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
 
           <div className="lg:col-span-2 space-y-6">
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1"><User className="w-3 h-3" /> Customer Info</h3>
-              <p className="font-bold text-slate-800">{displayData.customer_name || 'Walk-in Customer'}</p>
-              {displayData.customer_mobile && <p className="font-mono text-sm text-slate-600 mt-1">{displayData.customer_mobile}</p>}
+            {/* ⚡ NEW: Customer Info + Narration Box */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-5 flex flex-col md:flex-row gap-6">
+                <div className="flex-1">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1"><User className="w-3 h-3" /> Customer Info</h3>
+                  <p className="font-bold text-slate-800">{displayData.customer_name || 'Walk-in Customer'}</p>
+                  {displayData.customer_mobile && <p className="font-mono text-sm text-slate-600 mt-1">{displayData.customer_mobile}</p>}
+                </div>
+                
+                {displayData.narration && (
+                  <div className="flex-1 border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-6">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1"><FileText className="w-3 h-3" /> Narration / Notes</h3>
+                    <p className="text-sm font-medium text-slate-700 italic border-l-2 border-blue-400 pl-3 py-1 bg-slate-50 rounded-r-md">"{displayData.narration}"</p>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-0 overflow-hidden">
@@ -209,7 +214,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
 
           </div>
 
-          {/* RIGHT COLUMN */}
           <div className="space-y-6 lg:sticky lg:top-6 self-start w-full">
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
@@ -270,7 +274,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
-      {/* --- INJECT CSS TO HIDE BROWSER URL/DATE HEADERS --- */}
       <style type="text/css" media="print">
         {`
           @page { size: auto; margin: 0mm; }
@@ -278,7 +281,7 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
         `}
       </style>
 
-      {/* --- PRINTABLE A4 RECEIPT (Only visible when printing) --- */}
+      {/* --- PRINTABLE A4 RECEIPT --- */}
       <div
         className="hidden print:block w-full bg-white text-black p-4 font-sans"
         style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
@@ -305,10 +308,20 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
           </div>
         </div>
 
-        <div className="mb-8">
-          <p className="text-xs font-bold text-slate-400 uppercase border-b border-slate-200 pb-1 mb-2">Customer Details</p>
-          <h3 className="text-lg font-black text-slate-800">{displayData.customer_name || 'Walk-in Customer'}</h3>
-          {displayData.customer_mobile && <p className="text-sm text-slate-600 mt-1">Mobile: {displayData.customer_mobile}</p>}
+        <div className="mb-8 flex justify-between items-start">
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase border-b border-slate-200 pb-1 mb-2 inline-block">Customer Details</p>
+            <h3 className="text-lg font-black text-slate-800">{displayData.customer_name || 'Walk-in Customer'}</h3>
+            {displayData.customer_mobile && <p className="text-sm text-slate-600 mt-1">Mobile: {displayData.customer_mobile}</p>}
+          </div>
+
+          {/* ⚡ NEW: Narration on Print View */}
+          {displayData.narration && (
+            <div className="max-w-xs text-right">
+              <p className="text-xs font-bold text-slate-400 uppercase border-b border-slate-200 pb-1 mb-2 inline-block">Notes</p>
+              <p className="text-sm text-slate-700 italic mt-1 leading-relaxed">"{displayData.narration}"</p>
+            </div>
+          )}
         </div>
 
         <table className="w-full text-sm text-left mb-8 border border-slate-200">

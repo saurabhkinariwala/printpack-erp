@@ -10,8 +10,8 @@ type Location = { id: string; name: string }
 type Item = { id: string; name: string; sku: string }
 type LedgerEntry = {
   id: string;
-  transaction_date: string; // ⚡ FIX: Using new DB column
-  created_at: string;       // Keeping for fallback/audit
+  transaction_date: string;
+  created_at: string;
   transaction_type: string;
   quantity: number;
   notes: string | null;          
@@ -33,6 +33,10 @@ export default function ItemLedgerPage() {
   const [isFetchingData, setIsFetchingData] = useState(false)
   const [locations, setLocations] = useState<Location[]>([])
   const [items, setItems] = useState<Item[]>([])
+  
+  // ⚡ NEW: State to hold the Customer Name mapping
+  const [customerMap, setCustomerMap] = useState<Record<string, string>>({})
+  
   const [search, setSearch] = useState("")
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -53,9 +57,23 @@ export default function ItemLedgerPage() {
 
   useEffect(() => {
     async function fetchInitialData() {
+      // Fetch Locations
       const { data: locData } = await supabase.from('locations').select('id, name').order('name');
       if (locData) setLocations(locData);
 
+      // ⚡ NEW: Fetch Cash Memos to build the Customer Dictionary
+      const { data: cmData } = await supabase.from('cash_memos').select('memo_number, customer_name');
+      if (cmData) {
+        const map: Record<string, string> = {};
+        cmData.forEach(cm => {
+          if (cm.customer_name && cm.customer_name.trim() !== "") {
+            map[cm.memo_number] = cm.customer_name;
+          }
+        });
+        setCustomerMap(map);
+      }
+
+      // Fetch Items
       const { data: itemData } = await supabase.from('items').select('id, name, sku').order('name');
       if (itemData) {
         setItems(itemData);
@@ -86,7 +104,6 @@ export default function ItemLedgerPage() {
     async function generateLedger() {
       setIsFetchingData(true);
 
-      // ⚡ FIX: Calculate Absolute Current Stock (To guarantee it matches Inventory Page exactly)
       const { data: absoluteStockData } = await supabase
         .from('stock')
         .select('location_id, quantity')
@@ -101,10 +118,8 @@ export default function ItemLedgerPage() {
           absoluteTotal = locStock ? locStock.quantity : 0;
         }
       }
-      // The Closing Balance is now permanently anchored to physical reality
       setClosingBalance(absoluteTotal);
 
-      // 1. Calculate OPENING BALANCE (Using the new transaction_date column!)
       const { data: pastData } = await supabase
         .from('stock_ledger')
         .select('quantity, transaction_type, from_location_id, to_location_id')
@@ -127,7 +142,6 @@ export default function ItemLedgerPage() {
       }
       setOpeningBalance(openBal);
 
-      // 2. Fetch LEDGER ENTRIES (Filtered and Ordered by the new transaction_date column!)
       const { data: currentData } = await supabase
         .from('stock_ledger')
         .select(`
@@ -138,7 +152,7 @@ export default function ItemLedgerPage() {
         .eq('item_id', selectedItem?.id)
         .gte('transaction_date', startDate + "T00:00:00")
         .lte('transaction_date', endDate + "T23:59:59")
-        .order('transaction_date', { ascending: true }); // Crucial for chronological math
+        .order('transaction_date', { ascending: true });
 
       let runningBal = openBal;
       let tIn = 0;
@@ -172,7 +186,7 @@ export default function ItemLedgerPage() {
 
           processedEntries.push({
             id: row.id,
-            transaction_date: row.transaction_date, // ⚡ Capture the new date
+            transaction_date: row.transaction_date, 
             created_at: row.created_at,
             transaction_type: row.transaction_type,
             quantity: row.quantity,
@@ -211,16 +225,21 @@ export default function ItemLedgerPage() {
 
     [...entries].reverse().forEach(e => {
       const route = e.from_loc || e.to_loc ? `${e.from_loc?.name || 'External'} -> ${e.to_loc?.name || 'External'}` : e.transaction_type;
-      const notes = [e.vehicle_number, e.notes].filter(Boolean).join(" | ");
       
-      // ⚡ FIX: Use transaction_date for export to match UI precisely
+      // ⚡ FORMAT NOTES FOR EXCEL: Inject the customer name if it exists!
+      let finalNotes = [e.vehicle_number, e.notes].filter(Boolean).join(" | ");
+      const cmMatch = e.notes?.match(/(CM-\d+)/);
+      if (cmMatch && customerMap[cmMatch[1]]) {
+        finalNotes = `${finalNotes} [${customerMap[cmMatch[1]]}]`;
+      }
+
       const displayDate = e.transaction_date || e.created_at;
 
       csvData.push([
         `"${new Date(displayDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}"`,
         `"${e.transaction_type}"`,
         `"${route}"`,
-        `"${notes.replace(/"/g, '""')}"`,
+        `"${finalNotes.replace(/"/g, '""')}"`,
         e.qtyIn || "",
         e.qtyOut || "",
         e.runningBalance
@@ -364,8 +383,12 @@ export default function ItemLedgerPage() {
                     <tr><td colSpan={6} className="py-16 text-center text-slate-400 font-medium">No transactions found for this date range.</td></tr>
                   ) : (
                     entries.map((entry) => {
-                      // ⚡ FIX: Use transaction_date for UI display
                       const displayDate = entry.transaction_date || entry.created_at;
+                      
+                      // ⚡ UI RENDER: Extract CM number and check our map
+                      const cmMatch = entry.notes?.match(/(CM-\d+)/);
+                      const customerName = cmMatch ? customerMap[cmMatch[1]] : null;
+
                       return (
                         <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-3 px-5 whitespace-nowrap">
@@ -391,9 +414,11 @@ export default function ItemLedgerPage() {
                                </div>
                             )}
                             {(entry.notes || entry.vehicle_number) && (
-                              <p className="text-[10px] text-slate-500 font-mono">
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">
                                 {entry.vehicle_number && <span className="bg-slate-200 text-slate-700 px-1.5 rounded mr-2">{entry.vehicle_number}</span>}
                                 {entry.notes}
+                                {/* ⚡ UI RENDER: Display the customer name if found */}
+                                {customerName && <span className="ml-1.5 text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded">[{customerName}]</span>}
                               </p>
                             )}
                           </td>
