@@ -34,7 +34,6 @@ export default function ItemLedgerPage() {
   const [locations, setLocations] = useState<Location[]>([])
   const [items, setItems] = useState<Item[]>([])
   
-  // ⚡ NEW: State to hold the Customer Name mapping
   const [customerMap, setCustomerMap] = useState<Record<string, string>>({})
   
   const [search, setSearch] = useState("")
@@ -57,11 +56,9 @@ export default function ItemLedgerPage() {
 
   useEffect(() => {
     async function fetchInitialData() {
-      // Fetch Locations
       const { data: locData } = await supabase.from('locations').select('id, name').order('name');
       if (locData) setLocations(locData);
 
-      // ⚡ NEW: Fetch Cash Memos to build the Customer Dictionary
       const { data: cmData } = await supabase.from('cash_memos').select('memo_number, customer_name');
       if (cmData) {
         const map: Record<string, string> = {};
@@ -73,7 +70,6 @@ export default function ItemLedgerPage() {
         setCustomerMap(map);
       }
 
-      // Fetch Items
       const { data: itemData } = await supabase.from('items').select('id, name, sku').order('name');
       if (itemData) {
         setItems(itemData);
@@ -97,28 +93,11 @@ export default function ItemLedgerPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [supabase, searchParams])
 
-  // ── THE FINANCIAL ENGINE: Calculate Opening Balance & Ledger ──
   useEffect(() => {
     if (!selectedItem) return;
 
     async function generateLedger() {
       setIsFetchingData(true);
-
-      const { data: absoluteStockData } = await supabase
-        .from('stock')
-        .select('location_id, quantity')
-        .eq('item_id', selectedItem?.id);
-
-      let absoluteTotal = 0;
-      if (absoluteStockData) {
-        if (selectedLocation === "All") {
-          absoluteTotal = absoluteStockData.reduce((sum, s) => sum + s.quantity, 0);
-        } else {
-          const locStock = absoluteStockData.find(s => s.location_id === selectedLocation);
-          absoluteTotal = locStock ? locStock.quantity : 0;
-        }
-      }
-      setClosingBalance(absoluteTotal);
 
       const { data: pastData } = await supabase
         .from('stock_ledger')
@@ -203,6 +182,9 @@ export default function ItemLedgerPage() {
         });
       }
 
+      // ⚡ STRICT MATHEMATICAL CLOSING BALANCE
+      setClosingBalance(openBal + tIn - tOut);
+      
       setEntries(processedEntries.reverse());
       setTotalIn(tIn);
       setTotalOut(tOut);
@@ -213,7 +195,6 @@ export default function ItemLedgerPage() {
   }, [selectedItem, selectedLocation, startDate, endDate, supabase]);
 
 
-  // ── Excel Export ──
   const handleExportExcel = () => {
     if (!selectedItem) return alert("Please select an item first.");
 
@@ -226,7 +207,6 @@ export default function ItemLedgerPage() {
     [...entries].reverse().forEach(e => {
       const route = e.from_loc || e.to_loc ? `${e.from_loc?.name || 'External'} -> ${e.to_loc?.name || 'External'}` : e.transaction_type;
       
-      // ⚡ FORMAT NOTES FOR EXCEL: Inject the customer name if it exists!
       let finalNotes = [e.vehicle_number, e.notes].filter(Boolean).join(" | ");
       const cmMatch = e.notes?.match(/(CM-\d+)/);
       if (cmMatch && customerMap[cmMatch[1]]) {
@@ -270,7 +250,6 @@ export default function ItemLedgerPage() {
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-6 pb-20">
 
-      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-xl shadow-sm border border-slate-200">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -288,7 +267,6 @@ export default function ItemLedgerPage() {
         </div>
       </div>
 
-      {/* ── Filters Card ── */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="md:col-span-2 relative" ref={searchRef}>
@@ -340,7 +318,6 @@ export default function ItemLedgerPage() {
 
       {selectedItem ? (
         <div className="space-y-6">
-          {/* ── Summary Strip ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-slate-800 text-white rounded-xl p-5 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Opening Balance</p>
@@ -360,7 +337,6 @@ export default function ItemLedgerPage() {
             </div>
           </div>
 
-          {/* ── Ledger Table ── */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                <h3 className="font-bold text-slate-800 text-sm">Transaction History</h3>
@@ -384,8 +360,6 @@ export default function ItemLedgerPage() {
                   ) : (
                     entries.map((entry) => {
                       const displayDate = entry.transaction_date || entry.created_at;
-                      
-                      // ⚡ UI RENDER: Extract CM number and check our map
                       const cmMatch = entry.notes?.match(/(CM-\d+)/);
                       const customerName = cmMatch ? customerMap[cmMatch[1]] : null;
 
@@ -417,7 +391,6 @@ export default function ItemLedgerPage() {
                               <p className="text-[10px] text-slate-500 font-mono mt-0.5">
                                 {entry.vehicle_number && <span className="bg-slate-200 text-slate-700 px-1.5 rounded mr-2">{entry.vehicle_number}</span>}
                                 {entry.notes}
-                                {/* ⚡ UI RENDER: Display the customer name if found */}
                                 {customerName && <span className="ml-1.5 text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded">[{customerName}]</span>}
                               </p>
                             )}
