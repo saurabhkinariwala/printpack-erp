@@ -9,7 +9,7 @@ import {
 } from "recharts"
 import {
   TrendingUp, ShoppingCart, CreditCard, AlertTriangle, Plus,
-  Download, Calendar, RefreshCw, Package, Users, ArrowUpRight, X, Printer, Receipt
+  Download, Calendar, RefreshCw, Package, Users, ArrowUpRight, X, Printer, Receipt, List
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,6 +20,12 @@ type DayBookEntry = {
   document_number: string; document_id: string; customer_name: string;
   items: { name: string; qty: number; unit_price: number }[];
   total_amount: number; payments_on_day: number
+}
+type ItemReportEntry = {
+  name: string;
+  sku: string;
+  total_qty: number;
+  memos: { id: string; num: string }[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -32,10 +38,8 @@ export default function DashboardPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  // ⚡ THE VIEW TOGGLE
   const [activeView, setActiveView] = useState<"Orders" | "Cash Memos">("Orders")
 
-  // date range - default: first of current month to today
   const today = new Date().toISOString().split("T")[0]
   const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]
 
@@ -63,6 +67,13 @@ export default function DashboardPage() {
   const [isDayBookOpen, setIsDayBookOpen] = useState(false)
   const [isDayBookLoading, setIsDayBookLoading] = useState(false)
 
+  // Item Report
+  const [itemReportStart, setItemReportStart] = useState(firstOfMonth)
+  const [itemReportEnd, setItemReportEnd] = useState(today)
+  const [itemReportData, setItemReportData] = useState<ItemReportEntry[]>([])
+  const [isItemReportOpen, setIsItemReportOpen] = useState(false)
+  const [isItemReportLoading, setIsItemReportLoading] = useState(false)
+
   // ─── Main Data Fetch ─────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     setIsLoading(true)
@@ -75,7 +86,6 @@ export default function DashboardPage() {
     const diffDays = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
 
     if (activeView === "Orders") {
-      // ── FETCH ORDERS ──
       const { data: ordersData } = await supabase
         .from("orders")
         .select(`
@@ -94,7 +104,6 @@ export default function DashboardPage() {
           rev += Number(o.total_amount) || 0
           o.payments?.forEach((p: any) => { collected += Number(p.amount) || 0 })
 
-          // Trend
           let key: string
           const d = new Date(o.order_date)
           if (diffDays <= 31) key = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
@@ -103,7 +112,6 @@ export default function DashboardPage() {
           
           trendMap[key] = (trendMap[key] || 0) + (Number(o.total_amount) || 0)
 
-          // Products
           o.order_items?.forEach((oi: any) => {
             const item = oi.items
             if (!item) return
@@ -115,7 +123,6 @@ export default function DashboardPage() {
         })
       }
     } else {
-      // ── FETCH CASH MEMOS ──
       const { data: memoData } = await supabase
         .from("cash_memos")
         .select(`
@@ -133,7 +140,6 @@ export default function DashboardPage() {
           rev += Number(m.total_amount) || 0
           m.payments?.forEach((p: any) => { collected += Number(p.amount) || 0 })
 
-          // Trend
           let key: string
           const d = new Date(m.memo_date)
           if (diffDays <= 31) key = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
@@ -142,7 +148,6 @@ export default function DashboardPage() {
           
           trendMap[key] = (trendMap[key] || 0) + (Number(m.total_amount) || 0)
 
-          // Products
           m.cash_memo_items?.forEach((cmi: any) => {
             const item = cmi.items
             if (!item) return
@@ -155,7 +160,6 @@ export default function DashboardPage() {
       }
     }
 
-    // Set KPIs & Charts
     setTotalRevenue(rev)
     setTotalCollected(collected)
     setTotalPending(rev - collected)
@@ -166,7 +170,6 @@ export default function DashboardPage() {
     setTopBakery(allProducts.filter(p => p.category.toLowerCase().includes("bak")).slice(0, 10))
     setTopGiftBoxes(allProducts.filter(p => p.category.toLowerCase().includes("gift")).slice(0, 10))
 
-    // ── Low Stock (Same for both views as it reflects physical inventory) ──
     const { data: stockData } = await supabase.from("stock").select(`quantity, item_id, items(name, sku, sub_categories(name, categories(name)))`)
     const lowStock: LowStockItem[] = []
     if (stockData) {
@@ -236,7 +239,89 @@ export default function DashboardPage() {
     setIsDayBookLoading(false)
   }
 
-  // ─── Preset Range Buttons ─────────────────────────────────────────────────
+  // ─── Fetch Item-wise Report ───────────────────────────────────────────
+  const fetchItemReport = async () => {
+    setIsItemReportLoading(true)
+    setIsItemReportOpen(true)
+
+    const map: Record<string, ItemReportEntry> = {}
+
+    if (activeView === "Orders") {
+      const { data } = await supabase.from("orders").select(`
+        id, order_number, order_date,
+        order_items(quantity_ordered, items(name, sku))
+      `).gte("order_date", itemReportStart).lte("order_date", itemReportEnd).neq('status', 'Cancelled')
+
+      if (data) {
+        data.forEach((doc: any) => {
+          doc.order_items?.forEach((itemLine: any) => {
+            const sku = itemLine.items?.sku
+            if (!sku) return
+            if (!map[sku]) map[sku] = { name: itemLine.items?.name, sku, total_qty: 0, memos: [] }
+            
+            map[sku].total_qty += Number(itemLine.quantity_ordered) || 0
+            
+            if (!map[sku].memos.find(m => m.id === doc.id)) {
+              map[sku].memos.push({ id: doc.id, num: doc.order_number })
+            }
+          })
+        })
+      }
+    } else {
+      const { data } = await supabase.from("cash_memos").select(`
+        id, memo_number, memo_date,
+        cash_memo_items(quantity, items(name, sku))
+      `).gte("memo_date", itemReportStart).lte("memo_date", itemReportEnd)
+
+      if (data) {
+        data.forEach((doc: any) => {
+          doc.cash_memo_items?.forEach((itemLine: any) => {
+            const sku = itemLine.items?.sku
+            if (!sku) return
+            if (!map[sku]) map[sku] = { name: itemLine.items?.name, sku, total_qty: 0, memos: [] }
+            
+            map[sku].total_qty += Number(itemLine.quantity) || 0
+            
+            if (!map[sku].memos.find(m => m.id === doc.id)) {
+              map[sku].memos.push({ id: doc.id, num: doc.memo_number })
+            }
+          })
+        })
+      }
+    }
+
+    setItemReportData(Object.values(map).sort((a,b) => b.total_qty - a.total_qty))
+    setIsItemReportLoading(false)
+  }
+
+  // ⚡ NEW: Export Item Report to Excel
+  const handleExportItemReportExcel = () => {
+    if (itemReportData.length === 0) return alert("No data to export.");
+
+    const headers = ["Product Name", "SKU", "Total Sold", `${activeView} Numbers`];
+    
+    const csvData = itemReportData.map(item => {
+      const memosString = item.memos.map(m => m.num).join(", ");
+      return [
+        `"${item.name.replace(/"/g, '""')}"`, // Escape quotes
+        `"${item.sku}"`,
+        item.total_qty,
+        `"${memosString}"`
+      ].join(",");
+    });
+
+    const csvString = [headers.join(","), ...csvData].join("\n");
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Item_Report_${activeView}_${itemReportStart}_to_${itemReportEnd}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const setPreset = (preset: string) => {
     const now = new Date()
     if (preset === "today") { setStartDate(today); setEndDate(today) } 
@@ -254,7 +339,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6 pb-12 print:pb-0 print:gap-0">
-      <div className={`flex flex-col gap-6 ${isDayBookOpen ? 'print:hidden' : ''}`}>
+      <div className={`flex flex-col gap-6 ${(isDayBookOpen || isItemReportOpen) ? 'print:hidden' : ''}`}>
         
         {/* ── Header & View Toggle ── */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -392,21 +477,46 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* ── Sale Day Book ── */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-indigo-500" />
-              <h3 className="font-bold text-slate-800">Sale Day Book ({activeView})</h3>
+        {/* ── Detailed Reports Section ── */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
+            <Package className="h-5 w-5 text-indigo-500" />
+            <h3 className="font-bold text-slate-800 text-lg">Detailed Reports ({activeView})</h3>
+          </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Day Book Tool */}
+            <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+              <h4 className="font-bold text-slate-700 mb-1">Sale Day Book</h4>
+              <p className="text-xs text-slate-500 mb-4">View every transaction and payment for a single specific day.</p>
+              
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <input type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 font-medium w-full sm:w-auto" />
+                <button onClick={fetchDayBook} className="flex justify-center items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm w-full sm:w-auto">
+                  <Download className="h-4 w-4" /> View Day Book
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-3 sm:ml-auto">
-              <input type="date" value={dayBookDate} onChange={e => setDayBookDate(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-indigo-500 font-medium" />
-              <button onClick={fetchDayBook} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm">
-                <Download className="h-4 w-4" /> Generate Report
-              </button>
+
+            {/* Item-wise Summary Tool */}
+            <div className="bg-indigo-50/50 p-5 rounded-xl border border-indigo-100">
+              <h4 className="font-bold text-indigo-900 mb-1">Item-wise Summary</h4>
+              <p className="text-xs text-indigo-600/70 mb-4">Group sales by product over a specific date range.</p>
+              
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <input type="date" value={itemReportStart} onChange={e => setItemReportStart(e.target.value)} className="flex-1 border border-indigo-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 font-medium" />
+                  <span className="text-indigo-300 font-bold">to</span>
+                  <input type="date" value={itemReportEnd} onChange={e => setItemReportEnd(e.target.value)} className="flex-1 border border-indigo-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 font-medium" />
+                </div>
+                <button onClick={fetchItemReport} className="flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm w-full sm:w-auto">
+                  <List className="h-4 w-4" /> Generate Report
+                </button>
+              </div>
             </div>
           </div>
         </div>
+
       </div>
 
       {/* ── Day Book Modal ── */}
@@ -488,9 +598,52 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* ── Item-wise Report Modal ── */}
+      {isItemReportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8 print:static print:bg-white print:p-0 print:block">
+          <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col print:shadow-none print:max-h-none print:h-auto print:block">
+            <div className="flex items-center justify-between p-5 border-b border-indigo-100 bg-indigo-50 shrink-0 print:p-0 print:bg-white print:border-none print:mb-6">
+              <div>
+                <h2 className="text-lg font-black text-indigo-900 print:text-2xl">Item-wise Summary ({activeView})</h2>
+                <p className="text-sm font-semibold text-indigo-600/70">{fmtDate(itemReportStart)} to {fmtDate(itemReportEnd)}</p>
+              </div>
+              <div className="flex items-center gap-3 print:hidden">
+                {/* ⚡ NEW: Export Button */}
+                <button onClick={handleExportItemReportExcel} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors"><Download className="h-3.5 w-3.5" /> Export Excel</button>
+                <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors"><Printer className="h-3.5 w-3.5" /> Print</button>
+                <button onClick={() => setIsItemReportOpen(false)} className="text-indigo-400 hover:text-red-500 transition-colors"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto print:overflow-visible print:p-0">
+              {isItemReportLoading ? (
+                <div className="py-20 text-center text-slate-400">Aggregating item data...</div>
+              ) : itemReportData.length === 0 ? (
+                <div className="py-20 text-center text-slate-400">No items sold in this date range.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {itemReportData.map((item, i) => (
+                    <ItemReportRow key={i} item={item} activeView={activeView} router={router} />
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {!isItemReportLoading && itemReportData.length > 0 && (
+              <div className="bg-slate-900 text-white p-4 text-center text-xs font-bold tracking-widest uppercase print:hidden">
+                Showing {itemReportData.length} Unique Products
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
+
+// ─── Subcomponents ────────────────────────────────────────────────────────────
 
 function TopProductsCard({ title, products, isLoading }: { title: string; products: TopProduct[]; isLoading: boolean }) {
   return (
@@ -536,6 +689,59 @@ function TopProductsCard({ title, products, isLoading }: { title: string; produc
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function ItemReportRow({ item, activeView, router }: { item: ItemReportEntry, activeView: string, router: any }) {
+  const [showAll, setShowAll] = useState(false)
+  const displayMemos = showAll ? item.memos : item.memos.slice(0, 10)
+  const hiddenCount = item.memos.length - 10
+  
+  return (
+    <div className="p-5 hover:bg-slate-50/50 transition-colors print:break-inside-avoid">
+       <div className="flex justify-between items-start mb-3">
+          <div>
+            <h4 className="font-bold text-slate-800 text-base">{item.name}</h4>
+            <p className="text-xs font-mono text-slate-400 mt-0.5">{item.sku}</p>
+          </div>
+          <div className="text-right shrink-0 ml-4">
+            <p className="text-[10px] text-slate-500 uppercase font-black tracking-wider mb-0.5">Total Sold</p>
+            <p className="text-2xl font-black text-indigo-600">{item.total_qty}</p>
+          </div>
+       </div>
+       
+       <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-black uppercase text-slate-400 mr-1 flex items-center gap-1">
+            <Receipt className="w-3 h-3"/> Found in {item.memos.length} Memos:
+          </span>
+          {displayMemos.map(m => (
+            <button 
+              key={m.id}
+              onClick={() => router.push(activeView === "Orders" ? `/orders/${m.id}` : `/cash-memo/${m.id}`)}
+              className="text-[11px] font-bold font-mono bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 transition-colors print:border-none print:px-1 print:py-0"
+            >
+              {m.num}
+            </button>
+          ))}
+          
+          {!showAll && hiddenCount > 0 && (
+            <button 
+              onClick={() => setShowAll(true)}
+              className="text-[11px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-1 rounded hover:bg-indigo-100 transition-colors print:hidden"
+            >
+              + {hiddenCount} more...
+            </button>
+          )}
+          {showAll && hiddenCount > 0 && (
+            <button 
+              onClick={() => setShowAll(false)}
+              className="text-[11px] font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded hover:bg-slate-200 transition-colors print:hidden"
+            >
+              Show less
+            </button>
+          )}
+       </div>
     </div>
   )
 }
