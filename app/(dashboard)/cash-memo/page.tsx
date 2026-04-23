@@ -3,10 +3,9 @@
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Trash2, LayoutGrid, List as ListIcon, Calendar, RefreshCw, X, PackageOpen } from "lucide-react"
+import { Search, Plus, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Trash2, LayoutGrid, List as ListIcon, Calendar, RefreshCw, X, PackageOpen, Clock } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
-// ⚡ UPDATED: Added cash_memo_items to the type
 type CashMemo = {
   id: string;
   memo_number: string;
@@ -17,6 +16,9 @@ type CashMemo = {
   discount_value: number;
   is_gst_applied: boolean;
   created_at: string;
+  updated_at: string | null;
+  creator: { full_name: string } | null;
+  updater: { full_name: string } | null;
   payments: { amount: number; payment_date: string }[];
   cash_memo_items: { quantity: number; items: { name: string } | null }[];
 };
@@ -35,7 +37,6 @@ export default function CashMemosList() {
   const [startDate, setStartDate] = useState(firstOfMonth)
   const [endDate, setEndDate] = useState(today)
 
-  // ⚡ NEW: State to control the Quick View Modal
   const [quickViewMemo, setQuickViewMemo] = useState<CashMemo | null>(null)
 
   const { hasPermission } = useAuth()
@@ -43,11 +44,12 @@ export default function CashMemosList() {
 
   const fetchMemos = useCallback(async () => {
     setIsLoading(true);
-    // ⚡ UPDATED: Added cash_memo_items(quantity, items(name)) to the fetch query
     const { data } = await supabase
       .from('cash_memos')
       .select(`
-        id, memo_number, memo_date, customer_name, customer_mobile, total_amount, discount_value, is_gst_applied, created_at,
+        id, memo_number, memo_date, customer_name, customer_mobile, total_amount, discount_value, is_gst_applied, created_at, updated_at,
+        creator:created_by (full_name),
+        updater:updated_by (full_name),
         payments (amount, payment_date),
         cash_memo_items (quantity, items (name))
       `)
@@ -105,6 +107,21 @@ export default function CashMemosList() {
       </span>
     );
   }
+
+  // ⚡ UPDATED: Formats hover text to include Memo Number at the top
+  const getAuditTitle = (memo: CashMemo) => {
+    const formatDateTime = (dateStr: string) => new Date(dateStr).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    let title = `${memo.memo_number}\nCreated by: ${memo.creator?.full_name || 'System'}\nOn: ${formatDateTime(memo.created_at)}`;
+    
+    if (memo.updated_at && memo.updated_at !== memo.created_at) {
+      title += `\n\nLast Modified by: ${memo.updater?.full_name || 'System'}\nOn: ${formatDateTime(memo.updated_at)}`;
+    }
+    
+    return title;
+  };
 
   let filteredMemos = memos.filter(m =>
     m.memo_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -220,9 +237,18 @@ export default function CashMemosList() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredMemos.map((memo) => (
-                  <tr key={memo.id} className="hover:bg-slate-50 transition-colors">
+                  // ⚡ UPDATED: Attached hover title to the row
+                  <tr key={memo.id} className="hover:bg-slate-50 transition-colors" title={getAuditTitle(memo)}>
                     <td className="px-6 py-4 font-black text-slate-800">{memo.memo_number}</td>
-                    <td className="px-6 py-4 text-slate-600 font-medium">{new Date(memo.memo_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td className="px-6 py-4">
+                      <div className="text-slate-600 font-medium">
+                        {new Date(memo.memo_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {new Date(memo.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <div className="font-bold text-slate-800 text-sm">{memo.customer_name || 'Walk-in Customer'}</div>
                       {memo.customer_mobile && (
@@ -266,14 +292,22 @@ export default function CashMemosList() {
             const previewItems = memo.cash_memo_items?.slice(0, 3) || [];
             
             return (
-              <div key={memo.id} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden relative">
+              // ⚡ UPDATED: Attached hover title to the card
+              <div key={memo.id} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden relative" title={getAuditTitle(memo)}>
                 
                 {/* Header Strip */}
                 <div className="bg-slate-50 border-b border-slate-100 p-4 flex justify-between items-center">
                   <span className="font-black text-slate-800 text-lg">{memo.memo_number}</span>
-                  <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded border border-slate-200">
-                    {new Date(memo.memo_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                  </span>
+                  
+                  <div className="text-right">
+                    <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 block">
+                      {new Date(memo.memo_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                    </span>
+                    <p className="text-[9px] text-slate-400 font-mono mt-1 flex items-center justify-end gap-1">
+                      <Clock className="w-2.5 h-2.5" />
+                      {new Date(memo.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                    </p>
+                  </div>
                 </div>
                 
                 <div className="p-4 flex-1 flex flex-col gap-3">
@@ -283,7 +317,7 @@ export default function CashMemosList() {
                     {memo.customer_mobile && <p className="text-xs font-mono text-slate-500 mt-0.5">{memo.customer_mobile}</p>}
                   </div>
                   
-                  {/* ⚡ NEW: Items Preview Box */}
+                  {/* Items Preview Box */}
                   <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-3 text-xs flex flex-col gap-1.5 mt-1">
                     <div className="flex justify-between items-center border-b border-blue-100/50 pb-1 mb-1">
                       <span className="font-bold text-blue-800 flex items-center gap-1.5">
@@ -347,7 +381,7 @@ export default function CashMemosList() {
         </div>
       )}
 
-      {/* ⚡ NEW: Quick View Modal for Items */}
+      {/* Quick View Modal for Items */}
       {quickViewMemo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">

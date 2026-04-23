@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
-import { User, Receipt, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, History, CheckCircle, ImageIcon, FileText } from "lucide-react"
+import { User, Receipt, CreditCard, Layers, Calendar, Edit2, Trash2, ArrowLeft, History, CheckCircle, ImageIcon, FileText, Clock } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
 export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -27,6 +27,8 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
 
     const { data: memoData, error } = await supabase.from('cash_memos').select(`
       *,
+      creator:created_by (full_name),
+      updater:updated_by (full_name),
       cash_memo_items ( id, item_id, quantity, unit_price, gst_rate, items ( name, sku, image_path, sub_categories(name), sub_sub_categories(name) ) ),
       payments ( id, amount, payment_mode, transaction_reference, payment_date )
     `).eq('id', memoId).maybeSingle();
@@ -86,19 +88,43 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
   const totalPaid = displayData.payments?.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) || 0;
   const balanceDue = Math.max(0, grandTotal - totalPaid);
 
+  const formatDateTime = (dateString: string) => {
+    return new Date(dateString).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    });
+  };
+
   return (
     <>
       <div className="max-w-7xl mx-auto flex flex-col gap-6 pb-20 print:hidden">
 
+        {/* ── TOP HEADER ── */}
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <button onClick={() => router.push('/cash-memo')} className="p-2 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-blue-600 shadow-sm"><ArrowLeft className="w-5 h-5" /></button>
             <h1 className="text-xl font-bold text-slate-800">Back to List</h1>
           </div>
 
-          <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm">
-            <Receipt className="w-4 h-4" /> Print Cash Memo
-          </button>
+          <div className="flex items-center gap-5">
+            {/* ⚡ MOVED: Audit Trail directly beside the print button */}
+            {!isHistorical && (
+              <div className="hidden sm:flex flex-col text-right text-[10px] font-medium text-slate-400">
+                <span className="flex items-center justify-end gap-1.5">
+                  <Clock className="w-3 h-3" /> Created by <span className="font-bold text-slate-600">{memo.creator?.full_name || 'System'}</span> on {formatDateTime(memo.created_at)}
+                </span>
+                {memo.updated_at && memo.updated_at !== memo.created_at && (
+                  <span className="flex items-center justify-end gap-1.5 mt-0.5">
+                    <Edit2 className="w-3 h-3" /> Last modified by <span className="font-bold text-slate-600">{memo.updater?.full_name || 'System'}</span> on {formatDateTime(memo.updated_at)}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg shadow-sm font-bold flex items-center gap-2 transition-colors text-sm shrink-0">
+              <Receipt className="w-4 h-4" /> Print Cash Memo
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-xl shadow-sm border border-slate-200">
@@ -150,10 +176,7 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 opacity-95">
-
           <div className="lg:col-span-2 space-y-6">
-
-            {/* ⚡ NEW: Customer Info + Narration Box */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-5 flex flex-col md:flex-row gap-6">
                 <div className="flex-1">
@@ -211,11 +234,9 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
                 </table>
               </div>
             </div>
-
           </div>
 
           <div className="space-y-6 lg:sticky lg:top-6 self-start w-full">
-
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2"><Receipt className="w-4 h-4 text-blue-600" /> Tax & Summary</h3>
               <div className="space-y-3 text-sm">
@@ -269,7 +290,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
                 </div>
               </div>
             </div>
-
           </div>
         </div>
       </div>
@@ -315,7 +335,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
             {displayData.customer_mobile && <p className="text-sm text-slate-600 mt-1">Mobile: {displayData.customer_mobile}</p>}
           </div>
 
-          {/* ⚡ NEW: Narration on Print View */}
           {displayData.narration && (
             <div className="max-w-xs text-right">
               <p className="text-xs font-bold text-slate-400 uppercase border-b border-slate-200 pb-1 mb-2 inline-block">Notes</p>
@@ -362,7 +381,6 @@ export default function CashMemoDetailsPage({ params }: { params: Promise<{ id: 
             <p className="text-center text-xs font-bold text-slate-400 uppercase mt-4">Thank you for your business!</p>
           </div>
         </div>
-
       </div>
     </>
   )
