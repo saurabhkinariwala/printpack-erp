@@ -116,6 +116,7 @@ const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
 
   // Use the safe hasPermission function to check roles
   const canViewOrders = hasPermission('view_orders');
+  const canViewPayments = hasPermission('view_payments');
   const canViewDispatch = hasPermission('view_dispatch');
   const canManageRoles = hasPermission('manage_roles');
 
@@ -125,7 +126,7 @@ const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
     { name: "Cash Memo",        href: "/cash-memo", icon: Receipt },
     ...(canViewOrders   ? [{ name: "Orders",           href: "/orders",    icon: ShoppingCart }] : []),
     ...(canViewDispatch ? [{ name: "Dispatch Register",href: "/dispatch",  icon: Truck }] : []),
-    { name: "Payments",         href: "/payments",  icon: CreditCard      },
+    ...(canViewPayments ? [{ name: "Payments",         href: "/payments",  icon: CreditCard      }] : []),
     ...(!isPackArt ? [{ name: "Customers",        href: "/customers", icon: Users           }] : []),
     { name: "Inventory",        href: "/inventory", icon: Package         },
     ...(!isPackArt ? [{ name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  }] : []),

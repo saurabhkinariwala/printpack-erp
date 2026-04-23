@@ -7,6 +7,8 @@ import {
   Layers, MapPin, Plus, FileSpreadsheet, Download, CheckCircle, AlertTriangle, Info, Package, Trash2
 } from "lucide-react";
 import * as XLSX from "xlsx";
+// ⚡ IMPORT: Added useAuth for permission checking
+import { useAuth } from "@/context/AuthContext"
 
 type Stock = { quantity: number; locations: { id: string; name: string } };
 type Item = {
@@ -56,6 +58,8 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
   const xlsxInputRef = useRef<HTMLInputElement>(null);
 
   const supabase = createClient();
+  // ⚡ HOOK: Extract hasPermission from your auth context
+  const { hasPermission } = useAuth()
 
   useEffect(() => {
     async function fetchAll() {
@@ -397,12 +401,18 @@ export default function CategoryProductsPage({ params }: { params: Promise<any> 
                           <div className="h-full w-full flex items-center justify-center"><ImageIcon className="w-12 h-12 text-slate-300" /></div>
                         )}
                         <div className="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all z-10">
-                          <button onClick={() => openEditModal(item)} title="Edit Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 p-2 rounded-lg shadow-sm transition-colors">
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => handleDeleteProduct(item)} disabled={isSaving} title="Delete Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-red-600 hover:border-red-300 p-2 rounded-lg shadow-sm transition-colors disabled:opacity-50">
-                            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                          </button>
+                          {/* ⚡ CONTROL: Only show Edit if user has permission */}
+                          {hasPermission('edit_products') && (
+                            <button onClick={() => openEditModal(item)} title="Edit Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 p-2 rounded-lg shadow-sm transition-colors">
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          {/* ⚡ CONTROL: Only show Delete if user has permission */}
+                          {hasPermission('delete_products') && (
+                            <button onClick={() => handleDeleteProduct(item)} disabled={isSaving} title="Delete Product" className="bg-white/90 backdrop-blur border border-slate-200 text-slate-600 hover:text-red-600 hover:border-red-300 p-2 rounded-lg shadow-sm transition-colors disabled:opacity-50">
+                              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            </button>
+                          )}
                         </div>
                         <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded shadow-sm">Pack of {item.pack_size || 10}</div>
                       </div>

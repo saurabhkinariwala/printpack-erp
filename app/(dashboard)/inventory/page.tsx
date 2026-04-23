@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Search, Plus, Minus, X, Loader2, MapPin, Package, Filter, Save, History, Calendar } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
+import { useAuth } from "@/context/AuthContext"
 import Link from "next/link"
 
 type Location = { id: string; name: string; type: string }
@@ -17,6 +18,10 @@ type StockRow = {
 export default function InventoryPage() {
   const supabase = createClient()
   const { isCategoryAllowed } = usePermissions()
+  const { hasPermission } = useAuth()
+
+  // ⚡ NEW: Boolean to determine if the entire Actions column should exist
+  const showActions = hasPermission('add_stock') || hasPermission('remove_stock')
 
   const [locations, setLocations] = useState<Location[]>([])
   const [rows, setRows] = useState<StockRow[]>([])
@@ -31,7 +36,7 @@ export default function InventoryPage() {
   const [mfrItem, setMfrItem] = useState<StockRow | null>(null)
   const [mfrQtys, setMfrQtys] = useState<Record<string, string>>({})
   const [mfrNote, setMfrNote] = useState("")
-  const [mfrDate, setMfrDate] = useState(new Date().toISOString().split("T")[0]) // ⚡ NEW: Date state for Add
+  const [mfrDate, setMfrDate] = useState(new Date().toISOString().split("T")[0])
   const [isSaving, setIsSaving] = useState(false)
 
   // ── Adjustment (Remove Stock) States ──
@@ -98,7 +103,7 @@ export default function InventoryPage() {
     locations.forEach(l => { init[l.id] = "" })
     setMfrQtys(init)
     setMfrNote("")
-    setMfrDate(new Date().toISOString().split("T")[0]) // Reset to today
+    setMfrDate(new Date().toISOString().split("T")[0])
     setIsModalOpen(true)
   }
 
@@ -120,7 +125,7 @@ export default function InventoryPage() {
       await supabase.from("stock_ledger").insert({
         item_id: mfrItem.item_id, to_location_id: locationId,
         quantity: qty, transaction_type: "manufacture", reference_id: null, notes: mfrNote || null,
-        transaction_date: new Date(mfrDate).toISOString() // ⚡ FIX: Uses the new column!
+        transaction_date: new Date(mfrDate).toISOString() 
       })
     }
 
@@ -167,7 +172,7 @@ export default function InventoryPage() {
         from_location_id: adjustLocation, to_location_id: null,             
         quantity: qtyToRemove, transaction_type: "Adjustment",   
         notes: adjustReason.trim(),       
-        transaction_date: new Date(adjustDate).toISOString(), // ⚡ FIX: Uses the new column!
+        transaction_date: new Date(adjustDate).toISOString(), 
       });
       if (ledgerError) throw ledgerError;
 
@@ -311,7 +316,10 @@ export default function InventoryPage() {
                               <th key={l.id} className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase whitespace-nowrap min-w-[110px]">{l.name}</th>
                             ))}
                             {!selectedLocId && <th className="text-right px-4 py-2.5 font-bold text-blue-600 uppercase whitespace-nowrap">Total</th>}
-                            <th className="px-4 py-2.5 text-center font-bold text-slate-500 uppercase whitespace-nowrap">Actions</th>
+                            {/* ⚡ CONTROL: Conditionally render the Actions Header */}
+                            {showActions && (
+                              <th className="px-4 py-2.5 text-center font-bold text-slate-500 uppercase whitespace-nowrap">Actions</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -333,12 +341,20 @@ export default function InventoryPage() {
                                   )
                                 })}
                                 {!selectedLocId && <td className="px-4 py-3 text-right font-black text-blue-600">{row.total}</td>}
-                                <td className="px-4 py-3 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button onClick={() => openManufacture(row)} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold text-[10px] transition-colors" title="Add Manufactured Stock"><Plus className="h-3 w-3" /> Add</button>
-                                    <button onClick={() => openAdjust(row)} className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg font-bold text-[10px] transition-colors" title="Remove / Adjust Missing Stock"><Minus className="h-3 w-3" /> Remove</button>
-                                  </div>
-                                </td>
+                                
+                                {/* ⚡ CONTROL: Conditionally render the Actions Cell */}
+                                {showActions && (
+                                  <td className="px-4 py-3 text-center">
+                                    <div className="flex items-center justify-center gap-2">
+                                      {hasPermission('add_stock') && (
+                                        <button onClick={() => openManufacture(row)} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold text-[10px] transition-colors" title="Add Manufactured Stock"><Plus className="h-3 w-3" /> Add</button>
+                                      )}
+                                      {hasPermission('remove_stock') && (
+                                        <button onClick={() => openAdjust(row)} className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg font-bold text-[10px] transition-colors" title="Remove / Adjust Missing Stock"><Minus className="h-3 w-3" /> Remove</button>
+                                      )}
+                                    </div>
+                                  </td>
+                                )}
                               </tr>
                             )
                           })}
@@ -348,7 +364,8 @@ export default function InventoryPage() {
                             <td className="px-5 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Subtotal · {items.length} items</td>
                             {visibleLocations.map(l => (<td key={l.id} className="px-4 py-2 text-right font-black text-slate-600">{items.reduce((s, r) => s + (r.stock[l.id] || 0), 0).toLocaleString()}</td>))}
                             {!selectedLocId && <td className="px-4 py-2 text-right font-black text-blue-700">{items.reduce((s, r) => s + r.total, 0).toLocaleString()}</td>}
-                            <td />
+                            {/* ⚡ CONTROL: Conditionally render the empty footer cell */}
+                            {showActions && <td />}
                           </tr>
                         </tfoot>
                       </table>

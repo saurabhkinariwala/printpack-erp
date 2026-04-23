@@ -3,19 +3,25 @@
 import React, { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Search, Plus, Trash2, Calendar, FileText, ChevronDown, ChevronUp, Loader2, Building2, Pencil, Filter, X, Save } from "lucide-react"
+// ⚡ IMPORT: Added useAuth for permission checking
+import { useAuth } from "@/context/AuthContext"
 
 type CatalogItem = { id: string, name: string, sku: string }
 type CartItem = CatalogItem & { quantity: number }
 
 export default function InwardsPage() {
   const supabase = createClient()
+  
+  // ⚡ HOOK: Extract hasPermission from your auth context
+  const { hasPermission } = useAuth()
+  
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
 
   // ── Form States ──
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [editId, setEditId] = useState<string | null>(null) // Tracks if we are editing an existing slip
+  const [editId, setEditId] = useState<string | null>(null) 
   const [receiptDate, setReceiptDate] = useState(new Date().toISOString().split('T')[0])
   const [dmNumber, setDmNumber] = useState("")
   const [vendorName, setVendorName] = useState("")
@@ -41,7 +47,6 @@ export default function InwardsPage() {
     const { data: items } = await supabase.from('items').select('id, name, sku').order('name')
     if (items) setCatalog(items)
 
-    // ⚡ FIX: We added item_id to the fetch so we can reload the cart during Edit Mode
     const { data: history } = await supabase
       .from('inward_receipts')
       .select('id, receipt_date, dm_number, vendor_name, inward_receipt_items(item_id, quantity, items(name, sku))')
@@ -93,12 +98,12 @@ export default function InwardsPage() {
   }
 
   const openEditModal = (e: React.MouseEvent, r: any) => {
-    e.stopPropagation() // Prevent row from expanding
+    e.stopPropagation() 
     setEditId(r.id)
     setReceiptDate(r.receipt_date)
     setDmNumber(r.dm_number)
     setVendorName(r.vendor_name)
-    // Reload items into the cart
+    
     const loadedCart = r.inward_receipt_items.map((i: any) => ({
       id: i.item_id,
       name: i.items.name,
@@ -110,7 +115,7 @@ export default function InwardsPage() {
   }
 
   const handleDelete = async (e: React.MouseEvent, id: string, dm: string) => {
-    e.stopPropagation() // Prevent row from expanding
+    e.stopPropagation() 
     if (!window.confirm(`Are you sure you want to delete DM: ${dm}?\n\nThis will permanently reverse the stock items added by this slip.`)) return
     
     setIsLoading(true)
@@ -125,7 +130,6 @@ export default function InwardsPage() {
     
     setIsSubmitting(true)
 
-    // ⚡ Edit Mode Protocol: To safely edit, we reverse/delete the old one, and instantly post the new one.
     if (editId) {
       const { error: delError } = await supabase.rpc('delete_inward_receipt', { p_receipt_id: editId })
       if (delError) {
@@ -227,12 +231,18 @@ export default function InwardsPage() {
                       </td>
                       <td className="p-4">
                         <div className="flex items-center justify-center gap-1.5">
-                          <button onClick={(e) => openEditModal(e, r)} title="Edit Slip" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
-                            <Pencil className="w-4 h-4"/>
-                          </button>
-                          <button onClick={(e) => handleDelete(e, r.id, r.dm_number)} title="Delete Slip" className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
-                            <Trash2 className="w-4 h-4"/>
-                          </button>
+                          {/* ⚡ CONTROL: Only show Edit if user has permission */}
+                          {hasPermission('edit_inwards') && (
+                            <button onClick={(e) => openEditModal(e, r)} title="Edit Slip" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
+                              <Pencil className="w-4 h-4"/>
+                            </button>
+                          )}
+                          {/* ⚡ CONTROL: Only show Delete if user has permission */}
+                          {hasPermission('delete_inwards') && (
+                            <button onClick={(e) => handleDelete(e, r.id, r.dm_number)} title="Delete Slip" className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                              <Trash2 className="w-4 h-4"/>
+                            </button>
+                          )}
                         </div>
                       </td>
                       <td className="p-4 text-slate-400">
