@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, Trash2, Calendar, FileText, ChevronDown, ChevronUp, Loader2, Building2, Pencil, Filter, X, Save } from "lucide-react"
-// ⚡ IMPORT: Added useAuth for permission checking
+import { Search, Plus, Trash2, Calendar, FileText, ChevronDown, ChevronUp, Loader2, Building2, Pencil, Filter, X, Save, Clock } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
 type CatalogItem = { id: string, name: string, sku: string }
@@ -12,7 +11,6 @@ type CartItem = CatalogItem & { quantity: number }
 export default function InwardsPage() {
   const supabase = createClient()
   
-  // ⚡ HOOK: Extract hasPermission from your auth context
   const { hasPermission } = useAuth()
   
   const [isLoading, setIsLoading] = useState(true)
@@ -47,9 +45,15 @@ export default function InwardsPage() {
     const { data: items } = await supabase.from('items').select('id, name, sku').order('name')
     if (items) setCatalog(items)
 
+    // ⚡ UPDATED: Fetching the creator and updater audit details
     const { data: history } = await supabase
       .from('inward_receipts')
-      .select('id, receipt_date, dm_number, vendor_name, inward_receipt_items(item_id, quantity, items(name, sku))')
+      .select(`
+        id, receipt_date, dm_number, vendor_name, created_at, updated_at,
+        creator:created_by (full_name),
+        updater:updated_by (full_name),
+        inward_receipt_items(item_id, quantity, items(name, sku))
+      `)
       .order('receipt_date', { ascending: false })
       .order('created_at', { ascending: false })
     
@@ -64,6 +68,7 @@ export default function InwardsPage() {
     }
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase])
 
   // ── Logic: Filtering ──
@@ -75,6 +80,21 @@ export default function InwardsPage() {
     const matchesDm = !dmSearch || r.dm_number.toLowerCase().includes(dmSearch.toLowerCase())
     return matchesDate && matchesVendor && matchesDm
   })
+
+  // ⚡ NEW: Helper to format the hover text for audit trail
+  const getAuditTitle = (receipt: any) => {
+    const formatDateTime = (dateStr: string) => new Date(dateStr).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    let title = `DM-${receipt.dm_number}\nCreated by: ${receipt.creator?.full_name || 'System'}\nOn: ${formatDateTime(receipt.created_at)}`;
+    
+    if (receipt.updated_at && receipt.updated_at !== receipt.created_at) {
+      title += `\n\nLast Modified by: ${receipt.updater?.full_name || 'System'}\nOn: ${formatDateTime(receipt.updated_at)}`;
+    }
+    
+    return title;
+  };
 
   // ── Logic: Actions ──
   const filteredCatalog = catalog.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) || i.sku.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 8)
@@ -220,8 +240,18 @@ export default function InwardsPage() {
                 const isExpanded = expandedId === r.id;
                 return (
                   <React.Fragment key={r.id}>
-                    <tr onClick={() => setExpandedId(isExpanded ? null : r.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
-                      <td className="p-4 font-bold text-slate-700">{new Date(r.receipt_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    {/* ⚡ UPDATED: Attached the hover tooltip to the table row */}
+                    <tr onClick={() => setExpandedId(isExpanded ? null : r.id)} className="hover:bg-slate-50 cursor-pointer transition-colors" title={getAuditTitle(r)}>
+                      <td className="p-4">
+                        <div className="font-bold text-slate-700">
+                          {new Date(r.receipt_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </div>
+                        {/* ⚡ NEW: Time badge for consistency */}
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(r.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                        </div>
+                      </td>
                       <td className="p-4 font-bold text-slate-800 flex items-center gap-2"><Building2 className="w-4 h-4 text-slate-400"/> {r.vendor_name}</td>
                       <td className="p-4 font-mono text-slate-600">{r.dm_number}</td>
                       <td className="p-4 text-center">
@@ -231,13 +261,11 @@ export default function InwardsPage() {
                       </td>
                       <td className="p-4">
                         <div className="flex items-center justify-center gap-1.5">
-                          {/* ⚡ CONTROL: Only show Edit if user has permission */}
                           {hasPermission('edit_inwards') && (
                             <button onClick={(e) => openEditModal(e, r)} title="Edit Slip" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
                               <Pencil className="w-4 h-4"/>
                             </button>
                           )}
-                          {/* ⚡ CONTROL: Only show Delete if user has permission */}
                           {hasPermission('delete_inwards') && (
                             <button onClick={(e) => handleDelete(e, r.id, r.dm_number)} title="Delete Slip" className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
                               <Trash2 className="w-4 h-4"/>
