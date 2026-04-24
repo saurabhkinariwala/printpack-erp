@@ -8,7 +8,8 @@ import {
   LayoutDashboard, Package, ShoppingCart, Users, ArrowRightLeft,
   Menu, X, Box, ChevronDown, ChevronRight,
   FolderOpen, Loader2, ImageIcon, Tag, CreditCard, Truck, Bell, Receipt, Settings,
-  FileText
+  FileText, HelpCircle, Text,
+  Ticket
 } from "lucide-react";
 import LogoutButton from "@/components/ui/LogoutButton"
 import { AuthProvider, useAuth } from "@/context/AuthContext"
@@ -72,6 +73,40 @@ function HeaderUserBadge() {
   )
 }
 
+// ─── Real-Time Notification Bell ──────────────────────────────────────────────
+function NotificationBell() {
+  const { user } = useAuth()
+  const supabase = createClient()
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchUnreadCount = async () => {
+      const { count } = await supabase.from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id).eq('is_read', false);
+      if (count !== null) setUnreadCount(count);
+    };
+    fetchUnreadCount();
+
+    const channel = supabase.channel('realtime-notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, () => {
+        setUnreadCount((current) => current + 1);
+      }).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user, supabase]);
+
+  return (
+    <Link href="/tickets" className="relative p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors" title="Helpdesk">
+      <Bell className="h-5 w-5" />
+      {unreadCount > 0 && (
+        <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse" />
+      )}
+    </Link>
+  )
+}
+
 // ─── Inner Layout ─────────────────────────────────────────────────────────────
 function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -82,6 +117,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 const supabase = createClient();
 const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
+
+const { profile } = useAuth(); // Grab the profile
+
+const isSuperAdmin = profile?.roles?.name === 'Super Admin';
 
   // We bring in useAuth to use the hasPermission function safely!
   const { hasPermission } = useAuth();
@@ -133,7 +172,8 @@ const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
     ...(isPackArt ? [{ name: "Inwards Register", href: "/inwards",   icon: FileText        }] : []),
     { name: "Product Gallery",  href: "/gallery",   icon: ImageIcon       },
     // Gate the Roles page!
-    ...(canManageRoles  ? [{ name: "Roles",            href: "/settings/roles", icon: Settings }] : []),
+    ...(canManageRoles  ? [{ name: "Roles", href: "/settings/roles", icon: Settings }] : []),
+    { name: "Helpdesk Queue", href: "/tickets", icon: Ticket }
   ]
 
   const isProductsActive = pathname.includes("/products");
@@ -286,9 +326,18 @@ const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
             <BreadcrumbTitle pathname={pathname} />
           </div>
           <div className="flex items-center gap-3 ml-auto sm:ml-0">
-            <button className="relative p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
-              <Bell className="h-5 w-5" />
-            </button>
+            
+            {/* ⚡ NEW: Raise Ticket Button (Desktop & Mobile) */}
+            <Link href="/tickets/new" className="hidden sm:flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors shadow-sm">
+              <HelpCircle className="w-4 h-4" /> Raise Ticket
+            </Link>
+            <Link href="/tickets/new" className="sm:hidden p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-blue-600 transition-colors">
+              <HelpCircle className="w-5 h-5" />
+            </Link>
+
+            {/* ⚡ NEW: Real-Time Bell Component */}
+            <NotificationBell />
+
             <div className="h-6 w-px bg-slate-200" />
             <HeaderUserBadge />
           </div>

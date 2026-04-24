@@ -32,10 +32,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       setUser(session.user)
 
-      // Fetch the user's profile AND their linked role permissions in one single query
+      // ⚡ FIX: Added 'name' so profile.roles.name is populated!
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('*, roles(permissions)')
+        .select('*, roles(name, permissions)') 
         .eq('id', session.user.id)
         .single()
 
