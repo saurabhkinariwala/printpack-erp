@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, Minus, X, Loader2, MapPin, Package, Filter, Save, History, Calendar } from "lucide-react"
+import { Search, Plus, Minus, X, Loader2, MapPin, Package, Filter, Save, History, Calendar, Download, ArrowDownAZ, ArrowUpZA } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
 import { useAuth } from "@/context/AuthContext"
 import Link from "next/link"
@@ -20,16 +20,27 @@ export default function InventoryPage() {
   const { isCategoryAllowed } = usePermissions()
   const { hasPermission } = useAuth()
 
-  // ⚡ NEW: Boolean to determine if the entire Actions column should exist
   const showActions = hasPermission('add_stock') || hasPermission('remove_stock')
 
   const [locations, setLocations] = useState<Location[]>([])
   const [rows, setRows] = useState<StockRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState("")
-  const [categoryFilter, setCategoryFilter] = useState<string>("All")
   const [locationFilter, setLocationFilter] = useState<string>("All")
-  const [categories, setCategories] = useState<string[]>([])
+
+  // ── FILTER & SORT STATES ──
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const [sortOrder, setSortOrder] = useState<"A-Z" | "Z-A">("A-Z")
+  const [selectedCats, setSelectedCats] = useState<string[]>([])
+  const [selectedSubCats, setSelectedSubCats] = useState<string[]>([])
+  const [selectedSubSubCats, setSelectedSubSubCats] = useState<string[]>([])
+  const [qtyOperator, setQtyOperator] = useState<"greater" | "less">("greater")
+  const [qtyValue, setQtyValue] = useState<string>("")
+
+  const [appliedFilters, setAppliedFilters] = useState({ 
+    cats: [] as string[], subs: [] as string[], subSubs: [] as string[], 
+    qtyOp: "greater" as "greater" | "less", qtyVal: ""
+  })
 
   // ── Manufacture (Add Stock) States ──
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -82,12 +93,8 @@ export default function InventoryPage() {
       }
     })
 
-    const allRows = Object.values(map)
-      .filter(r => isCategoryAllowed(r.category))
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-
+    const allRows = Object.values(map).filter(r => isCategoryAllowed(r.category))
     setRows(allRows)
-    setCategories(["All", ...Array.from(new Set(allRows.map(r => r.category))).sort()])
     setIsLoading(false)
   }
 
@@ -185,16 +192,87 @@ export default function InventoryPage() {
     }
   }
 
-  // ── Filtering & Grouping ──
+  // ── Filtering Logic ──
+  const handleApplyFilters = () => {
+    setAppliedFilters({ cats: selectedCats, subs: selectedSubCats, subSubs: selectedSubSubCats, qtyOp: qtyOperator, qtyVal: qtyValue });
+    setIsFilterOpen(false);
+  };
+
+  const handleClearFilters = () => {
+    setSelectedCats([]); setSelectedSubCats([]); setSelectedSubSubCats([]);
+    setQtyOperator("greater"); setQtyValue("");
+    setAppliedFilters({ cats: [], subs: [], subSubs: [], qtyOp: "greater", qtyVal: "" });
+    setSortOrder("A-Z"); setIsFilterOpen(false);
+  };
+
   const selectedLocId = locationFilter === "All" ? null : locations.find(l => l.id === locationFilter)?.id ?? null
+
   const filtered = rows.filter(r => {
-    const matchesCat = categoryFilter === "All" || r.category === categoryFilter
     const q = search.toLowerCase()
     const matchesSearch = !q || r.name.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q)
     const matchesLoc = !selectedLocId || (r.stock[selectedLocId] || 0) > 0
-    return matchesCat && matchesSearch && matchesLoc
+    
+    const matchesCat = appliedFilters.cats.length === 0 || appliedFilters.cats.includes(r.category)
+    const matchesSub = appliedFilters.subs.length === 0 || appliedFilters.subs.includes(r.sub_category)
+    const matchesSubSub = appliedFilters.subSubs.length === 0 || appliedFilters.subSubs.includes(r.sub_sub_category)
+
+    let matchesQty = true;
+    if (appliedFilters.qtyVal !== "") {
+      const compareValue = Number(appliedFilters.qtyVal);
+      if (appliedFilters.qtyOp === "greater") { matchesQty = r.total >= compareValue; } 
+      else { matchesQty = r.total <= compareValue; }
+    }
+
+    return matchesSearch && matchesLoc && matchesCat && matchesSub && matchesSubSub && matchesQty
   })
 
+  // Apply Sorting
+  filtered.sort((a, b) => sortOrder === "A-Z" 
+    ? a.name.localeCompare(b.name, undefined, { numeric: true }) 
+    : b.name.localeCompare(a.name, undefined, { numeric: true })
+  )
+
+  // ── Dynamic Filter Options (Based on available rows) ──
+  const uniqueCats = Array.from(new Set(rows.map(r => r.category))).filter(Boolean).sort()
+  const uniqueSubs = Array.from(new Set(rows.filter(r => selectedCats.length === 0 || selectedCats.includes(r.category)).map(r => r.sub_category))).filter(Boolean).sort()
+  const uniqueSubSubs = Array.from(new Set(rows.filter(r => selectedSubCats.length === 0 || selectedSubCats.includes(r.sub_category)).map(r => r.sub_sub_category))).filter(Boolean).sort()
+
+  // ── Export to Excel Logic ──
+  const handleExportToExcel = () => {
+    const escapeCsv = (str: string | number) => `"${String(str).replace(/"/g, '""')}"`
+    
+    // Build Headers
+    const locNames = locations.map(l => l.name)
+    const headers = ["Category", "Sub Category", "Variant", "Product Name", "SKU", "Pack Size", ...locNames, "Total Stock"]
+    const csvRows = [headers.join(",")]
+
+    // Build Rows from Currently Filtered Data
+    filtered.forEach(r => {
+      const row = [
+        escapeCsv(r.category),
+        escapeCsv(r.sub_category || "General"),
+        escapeCsv(r.sub_sub_category || "Standard"),
+        escapeCsv(r.name),
+        escapeCsv(r.sku),
+        r.pack_size,
+        ...locations.map(l => r.stock[l.id] || 0),
+        r.total
+      ]
+      csvRows.push(row.join(","))
+    })
+
+    // Download Blob
+    const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `Inventory_Export_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  // Grouping for the Table UI
   type L3 = Record<string, StockRow[]>
   type L2 = Record<string, L3>
   type L1 = Record<string, L2>
@@ -216,17 +294,20 @@ export default function InventoryPage() {
   const visibleLocations = selectedLocId ? locations.filter(l => l.id === selectedLocId) : locations
 
   return (
-    <div className="flex flex-col gap-6 pb-12">
+    <div className="flex flex-col gap-6 pb-12 relative">
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Inventory</h2>
           <p className="text-sm text-slate-500 mt-0.5">Live stock across all locations · Add or Remove stock</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Link href="/inventory/ledger" className="flex items-center gap-2 px-4 py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 rounded-lg text-sm font-bold shadow-sm transition-colors">
             <History className="h-4 w-4" /> View Item Ledger
           </Link>
+          <button onClick={handleExportToExcel} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm transition-colors">
+            <Download className="h-4 w-4" /> Export to Excel
+          </button>
           <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-50 shadow-sm">
             <Package className="h-4 w-4" /> Refresh
           </button>
@@ -266,21 +347,15 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── Category + Search filters ── */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-48">
+      {/* ── Search & Sidebar Trigger ── */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search product or SKU…" className="w-full pl-9 pr-4 py-1.5 text-sm border border-slate-300 rounded-lg outline-none focus:border-blue-500" />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search product or SKU…" className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-blue-500" />
         </div>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          <div className="flex gap-1 flex-wrap">
-            {categories.map(c => (
-              <button key={c} onClick={() => setCategoryFilter(c)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${categoryFilter === c ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"}`}>{c}</button>
-            ))}
-          </div>
-        </div>
+        <button onClick={() => setIsFilterOpen(true)} className="flex items-center gap-2 bg-slate-100 border border-slate-200 px-5 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-colors">
+          <Filter className="h-4 w-4" /> Filters
+        </button>
       </div>
 
       {/* ── Table ── */}
@@ -316,7 +391,6 @@ export default function InventoryPage() {
                               <th key={l.id} className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase whitespace-nowrap min-w-[110px]">{l.name}</th>
                             ))}
                             {!selectedLocId && <th className="text-right px-4 py-2.5 font-bold text-blue-600 uppercase whitespace-nowrap">Total</th>}
-                            {/* ⚡ CONTROL: Conditionally render the Actions Header */}
                             {showActions && (
                               <th className="px-4 py-2.5 text-center font-bold text-slate-500 uppercase whitespace-nowrap">Actions</th>
                             )}
@@ -342,7 +416,6 @@ export default function InventoryPage() {
                                 })}
                                 {!selectedLocId && <td className="px-4 py-3 text-right font-black text-blue-600">{row.total}</td>}
                                 
-                                {/* ⚡ CONTROL: Conditionally render the Actions Cell */}
                                 {showActions && (
                                   <td className="px-4 py-3 text-center">
                                     <div className="flex items-center justify-center gap-2">
@@ -364,7 +437,6 @@ export default function InventoryPage() {
                             <td className="px-5 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Subtotal · {items.length} items</td>
                             {visibleLocations.map(l => (<td key={l.id} className="px-4 py-2 text-right font-black text-slate-600">{items.reduce((s, r) => s + (r.stock[l.id] || 0), 0).toLocaleString()}</td>))}
                             {!selectedLocId && <td className="px-4 py-2 text-right font-black text-blue-700">{items.reduce((s, r) => s + r.total, 0).toLocaleString()}</td>}
-                            {/* ⚡ CONTROL: Conditionally render the empty footer cell */}
                             {showActions && <td />}
                           </tr>
                         </tfoot>
@@ -378,9 +450,86 @@ export default function InventoryPage() {
         ))
       )}
 
-      {/* ── Manufacture (Add) Modal ── */}
+      {/* ── Slide-Out Filter Panel ── */}
+      {isFilterOpen && <div className="fixed inset-0 bg-slate-900/40 z-40 backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />}
+      <div className={`fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-white shadow-2xl transform transition-transform duration-300 flex flex-col ${isFilterOpen ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-bold flex items-center gap-2"><Filter className="h-5 w-5 text-blue-600" /> Filter & Sort</h2>
+          <button onClick={() => setIsFilterOpen(false)}><X className="h-5 w-5 text-slate-400 hover:text-slate-700" /></button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+          
+          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+            <h3 className="font-bold text-xs uppercase text-blue-800 mb-3 tracking-wider">Total Stock Quantity</h3>
+            <div className="flex gap-2">
+              <select value={qtyOperator} onChange={(e) => setQtyOperator(e.target.value as "greater" | "less")} className="w-1/2 p-2 text-sm border border-slate-300 rounded-md outline-none focus:border-blue-500 bg-white">
+                <option value="greater">&ge; Greater than</option>
+                <option value="less">&le; Less than</option>
+              </select>
+              <input type="number" placeholder="e.g. 500" value={qtyValue} onChange={(e) => setQtyValue(e.target.value)} className="w-1/2 p-2 text-sm border border-slate-300 rounded-md outline-none focus:border-blue-500 bg-white" />
+            </div>
+            <p className="text-[10px] text-slate-500 mt-2 italic">Filters by the total actual stock across all locations.</p>
+          </div>
+
+          <div>
+             <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Sort Alphabetically</h3>
+             <div className="flex gap-2">
+               <button onClick={() => setSortOrder("A-Z")} className={`flex-1 py-2 flex justify-center items-center gap-2 border rounded-md text-sm font-semibold transition-colors ${sortOrder === "A-Z" ? "bg-slate-100 border-slate-300 text-slate-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}><ArrowDownAZ className="w-4 h-4"/> A to Z</button>
+               <button onClick={() => setSortOrder("Z-A")} className={`flex-1 py-2 flex justify-center items-center gap-2 border rounded-md text-sm font-semibold transition-colors ${sortOrder === "Z-A" ? "bg-slate-100 border-slate-300 text-slate-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}><ArrowUpZA className="w-4 h-4"/> Z to A</button>
+             </div>
+          </div>
+
+          <div>
+            <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Main Categories</h3>
+            <div className="space-y-3">
+              {uniqueCats.map(c => (
+                <label key={c} className="flex items-center gap-3 cursor-pointer group">
+                  <input type="checkbox" checked={selectedCats.includes(c)} onChange={(e) => setSelectedCats(e.target.checked ? [...selectedCats, c] : selectedCats.filter(id => id !== c))} className="h-4.5 w-4.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                  <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{c}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {uniqueSubs.length > 0 && (
+            <div>
+              <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Sub-Categories</h3>
+              <div className="space-y-3 border-l-2 border-slate-100 pl-3">
+                {uniqueSubs.map(sc => (
+                  <label key={sc} className="flex items-center gap-3 cursor-pointer group">
+                    <input type="checkbox" checked={selectedSubCats.includes(sc)} onChange={(e) => setSelectedSubCats(e.target.checked ? [...selectedSubCats, sc] : selectedSubCats.filter(id => id !== sc))} className="h-4.5 w-4.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                    <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{sc}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {uniqueSubSubs.length > 0 && (
+            <div>
+              <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Variants / Sizes</h3>
+              <div className="space-y-3 border-l-2 border-slate-100 pl-3 ml-3">
+                {uniqueSubSubs.map(ssc => (
+                  <label key={ssc} className="flex items-center gap-3 cursor-pointer group">
+                    <input type="checkbox" checked={selectedSubSubCats.includes(ssc)} onChange={(e) => setSelectedSubSubCats(e.target.checked ? [...selectedSubSubCats, ssc] : selectedSubSubCats.filter(id => id !== ssc))} className="h-4.5 w-4.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                    <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{ssc}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 bg-slate-50 flex gap-3 border-t border-slate-200">
+          <button onClick={handleClearFilters} className="flex-1 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors">Clear All</button>
+          <button onClick={handleApplyFilters} className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-blue-700 transition-colors">Apply Filters</button>
+        </div>
+      </div>
+
+      {/* ── Manufacture Modal (Unchanged) ── */}
       {isModalOpen && mfrItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-green-50">
               <div>
@@ -421,9 +570,9 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── Adjustment (Remove) Modal ── */}
+      {/* ── Adjustment Modal (Unchanged) ── */}
       {isAdjustModalOpen && adjustItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col">
             <div className="p-5 border-b border-slate-200 bg-orange-50 flex items-center justify-between">
               <div>

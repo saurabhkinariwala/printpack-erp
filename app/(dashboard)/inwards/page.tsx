@@ -150,16 +150,22 @@ export default function InwardsPage() {
     
     setIsSubmitting(true)
 
-    if (editId) {
-      const { error: delError } = await supabase.rpc('delete_inward_receipt', { p_receipt_id: editId })
-      if (delError) {
-        alert("Failed to update existing record."); setIsSubmitting(false); return;
-      }
-    }
+    // ⚡ FIX: Consolidate duplicates so the database receives one clean total per item ID
+    const consolidatedItems: Record<string, number> = {};
+    cart.forEach(c => {
+      consolidatedItems[c.id] = (consolidatedItems[c.id] || 0) + c.quantity;
+    });
+    const cleanPayloadItems = Object.entries(consolidatedItems).map(([id, quantity]) => ({ id, quantity }));
 
+    // ⚡ FIX: Pass the editId into the header. Removed the delete_inward_receipt call.
     const payload = {
-      header: { receipt_date: receiptDate, dm_number: dmNumber, vendor_name: vendorName },
-      items: cart.map(c => ({ id: c.id, quantity: c.quantity }))
+      header: { 
+        ...(editId ? { id: editId } : {}), 
+        receipt_date: receiptDate, 
+        dm_number: dmNumber, 
+        vendor_name: vendorName 
+      },
+      items: cleanPayloadItems
     }
 
     const { error } = await supabase.rpc('process_inward_receipt', { payload })
@@ -366,11 +372,29 @@ export default function InwardsPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {cart.length === 0 ? <tr><td colSpan={3} className="p-6 text-center text-slate-400">No items added yet.</td></tr> : (
-                      cart.map((item) => (
-                        <tr key={item.id}>
+                      cart.map((item, idx) => (
+                        <tr key={`${item.id}-${idx}`}>
                           <td className="p-3 font-bold text-slate-700">{item.name}</td>
-                          <td className="p-3 text-center"><input type="number" min="1" value={item.quantity} onChange={e => setCart(cart.map(c => c.id === item.id ? { ...c, quantity: parseInt(e.target.value)||1 } : c))} className="w-24 border rounded p-1.5 text-center font-black text-green-700 outline-none focus:border-blue-500"/></td>
-                          <td className="p-3"><button onClick={() => setCart(cart.filter(c => c.id !== item.id))} className="text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button></td>
+                          <td className="p-3 text-center">
+                            {/* ⚡ FIX: Use idx to update only this specific row */}
+                            <input 
+                              type="number" 
+                              min="1" 
+                              value={item.quantity} 
+                              onChange={e => {
+                                const newCart = [...cart];
+                                newCart[idx].quantity = parseInt(e.target.value) || 1;
+                                setCart(newCart);
+                              }} 
+                              className="w-24 border rounded p-1.5 text-center font-black text-green-700 outline-none focus:border-blue-500"
+                            />
+                          </td>
+                          <td className="p-3">
+                            {/* ⚡ FIX: Use idx to delete only this specific row */}
+                            <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-red-500">
+                              <Trash2 className="w-4 h-4"/>
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}

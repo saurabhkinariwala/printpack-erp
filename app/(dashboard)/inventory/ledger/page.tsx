@@ -108,11 +108,14 @@ export default function ItemLedgerPage() {
       let openBal = 0;
       if (pastData) {
         pastData.forEach(row => {
+          const type = row.transaction_type?.toLowerCase() || '';
+          
           if (selectedLocation === "All") {
+            // ⚡ FIX: Explicitly catch all transaction types so math doesn't break
             if (row.to_location_id && !row.from_location_id) openBal += row.quantity; 
             else if (row.from_location_id && !row.to_location_id) openBal -= row.quantity; 
-            else if (row.transaction_type?.toLowerCase() === 'sale') openBal -= row.quantity;
-            else if (row.transaction_type?.toLowerCase() === 'refund') openBal += row.quantity;
+            else if (type === 'sale' || type === 'adjustment') openBal -= row.quantity;
+            else if (type === 'refund' || type === 'inward receipt' || type === 'manufacture') openBal += row.quantity;
           } else {
             if (row.to_location_id === selectedLocation) openBal += row.quantity;
             if (row.from_location_id === selectedLocation) openBal -= row.quantity;
@@ -131,7 +134,8 @@ export default function ItemLedgerPage() {
         .eq('item_id', selectedItem?.id)
         .gte('transaction_date', startDate + "T00:00:00")
         .lte('transaction_date', endDate + "T23:59:59")
-        .order('transaction_date', { ascending: true });
+        .order('transaction_date', { ascending: true })
+        .order('created_at', { ascending: true }); // ⚡ FIX: Tie-breaker so same-day items don't shuffle
 
       let runningBal = openBal;
       let tIn = 0;
@@ -143,19 +147,21 @@ export default function ItemLedgerPage() {
         currentData.forEach(row => {
           let qIn = 0;
           let qOut = 0;
+          const type = row.transaction_type?.toLowerCase() || '';
 
           if (selectedLocation === "All") {
+            // ⚡ FIX: Properly categorize rows into IN and OUT
             if (row.to_location_id && !row.from_location_id) qIn = row.quantity; 
             else if (row.from_location_id && !row.to_location_id) qOut = row.quantity; 
-            else if (row.transaction_type?.toLowerCase() === 'sale') qOut = row.quantity;
-            else if (row.transaction_type?.toLowerCase() === 'refund') qIn = row.quantity;
-            else if (row.transaction_type?.toLowerCase() === 'transfer') { qIn = 0; qOut = 0; }
+            else if (type === 'sale' || type === 'adjustment') qOut = row.quantity;
+            else if (type === 'refund' || type === 'inward receipt' || type === 'manufacture') qIn = row.quantity;
+            else if (type === 'transfer') { qIn = 0; qOut = 0; }
           } else {
             if (row.to_location_id === selectedLocation) qIn = row.quantity;
             if (row.from_location_id === selectedLocation) qOut = row.quantity;
           }
 
-          if (qIn === 0 && qOut === 0 && row.transaction_type?.toLowerCase() !== 'transfer') return;
+          if (qIn === 0 && qOut === 0 && type !== 'transfer') return;
           if (selectedLocation !== "All" && qIn === 0 && qOut === 0) return;
 
           runningBal += qIn;
@@ -182,7 +188,6 @@ export default function ItemLedgerPage() {
         });
       }
 
-      // ⚡ STRICT MATHEMATICAL CLOSING BALANCE
       setClosingBalance(openBal + tIn - tOut);
       
       setEntries(processedEntries.reverse());
