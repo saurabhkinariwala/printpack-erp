@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/context/AuthContext"
-import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users, User } from "lucide-react"
+import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users, User, Power } from "lucide-react"
 
 const PERMISSION_KEYS = {
   view_dashboard: "View Dashboard",
@@ -120,10 +120,27 @@ export default function RolesAndUsersPage() {
     // 1. Optimistic UI update for speed
     setUsers(users.map(u => u.id === userId ? { ...u, role_id: newRoleId } : u))
     
-    // 2. Direct DB update using the standard client (Works because of RLS)
+    // 2. Direct DB update using the standard client
     const { error } = await supabase.from('profiles').update({ role_id: newRoleId }).eq('id', userId)
     
     if (error) alert("Failed to update user role: " + error.message)
+  }
+
+  // ⚡ NEW: Status Toggle Logic
+  const handleStatusToggle = async (userId: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    
+    // 1. Optimistic UI update so the switch feels instant
+    setUsers(users.map(u => u.id === userId ? { ...u, is_user_active: newStatus } : u))
+    
+    // 2. Direct DB update
+    const { error } = await supabase.from('profiles').update({ is_user_active: newStatus }).eq('id', userId)
+    
+    if (error) {
+      alert("Failed to update user status: " + error.message)
+      // Revert the switch if the database failed
+      setUsers(users.map(u => u.id === userId ? { ...u, is_user_active: currentStatus } : u))
+    }
   }
 
   return (
@@ -231,9 +248,8 @@ export default function RolesAndUsersPage() {
           <div className="p-6 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-600"/> Team Members</h2>
-              <p className="text-sm text-slate-500 font-medium mt-1">Assign roles to your staff.</p>
+              <p className="text-sm text-slate-500 font-medium mt-1">Assign roles and manage active shifts.</p>
             </div>
-            {/* The "Add User" button has been entirely removed */}
           </div>
 
           <div className="overflow-x-auto">
@@ -243,35 +259,59 @@ export default function RolesAndUsersPage() {
                   <th className="p-5">Name</th>
                   <th className="p-5">Email</th>
                   <th className="p-5">Assigned Role</th>
+                  {/* ⚡ NEW: Status Header */}
+                  <th className="p-5 text-right">Access Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {users.length === 0 ? (
-                  <tr><td colSpan={3} className="p-12 text-center text-slate-400">No users found in the system.</td></tr>
+                  <tr><td colSpan={4} className="p-12 text-center text-slate-400">No users found in the system.</td></tr>
                 ) : (
-                  users.map(user => (
-                    <tr key={user.id} className="hover:bg-slate-50">
-                      <td className="p-5 font-bold text-slate-800 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-black">
-                          {user.full_name ? user.full_name.charAt(0).toUpperCase() : <User className="w-4 h-4"/>}
-                        </div>
-                        {user.full_name || 'Unnamed User'}
-                      </td>
-                      <td className="p-5 text-slate-600">{user.email}</td>
-                      <td className="p-5">
-                        <select 
-                          value={user.role_id || ""} 
-                          onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                          className="bg-slate-100 border border-slate-200 text-slate-800 text-sm font-bold rounded-lg px-3 py-2 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all cursor-pointer"
-                        >
-                          <option value="" disabled>Select a role...</option>
-                          {roles.map(r => (
-                            <option key={r.id} value={r.id}>{r.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))
+                  users.map(user => {
+                    const isActive = !!user.is_user_active;
+                    // Protect yourself (Super Admin) from accidentally locking yourself out!
+                    const isSuperAdmin = user.role_id && roles.find(r => r.id === user.role_id)?.name === 'Admin';
+
+                    return (
+                      <tr key={user.id} className="hover:bg-slate-50">
+                        <td className="p-5 font-bold text-slate-800 flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-white ${isActive ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                            {user.full_name ? user.full_name.charAt(0).toUpperCase() : <User className="w-4 h-4"/>}
+                          </div>
+                          {user.full_name || 'Unnamed User'}
+                        </td>
+                        <td className="p-5 text-slate-600">{user.email}</td>
+                        <td className="p-5">
+                          <select 
+                            value={user.role_id || ""} 
+                            onChange={(e) => handleRoleChange(user.id, e.target.value)}
+                            className="bg-slate-100 border border-slate-200 text-slate-800 text-sm font-bold rounded-lg px-3 py-2 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all cursor-pointer"
+                          >
+                            <option value="" disabled>Select a role...</option>
+                            {roles.map(r => (
+                              <option key={r.id} value={r.id}>{r.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        {/* ⚡ NEW: Toggle Switch Cell */}
+                        <td className="p-5 text-right">
+                          <div className="flex items-center justify-end gap-3">
+                            <span className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-green-600' : 'text-slate-400'}`}>
+                              {isActive ? 'Active' : 'Locked'}
+                            </span>
+                            <button 
+                              onClick={() => handleStatusToggle(user.id, isActive)}
+                              disabled={isSuperAdmin}
+                              title={isSuperAdmin ? "Cannot lock out Admins" : "Toggle Access"}
+                              className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 ease-in-out ${isSuperAdmin ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${isActive ? 'bg-green-500' : 'bg-slate-300'}`}
+                            >
+                              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300 ease-in-out ${isActive ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>

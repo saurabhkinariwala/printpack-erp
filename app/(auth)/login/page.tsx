@@ -31,7 +31,8 @@ export default function LoginPage() {
       loginEmail = `${loginEmail}@${authDomain}`;
     }
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    // 1. Initial Authentication
+    const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
       email: loginEmail,
       password,
     })
@@ -43,7 +44,28 @@ export default function LoginPage() {
         
       setError(cleanMessage)
       setIsLoading(false)
-    } else {
+      return; // Stop execution here on error
+    } 
+
+    // 2. THE GATEKEEPER CHECK: Password was right, now verify the profile status
+    if (authData.user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('is_user_active, role:roles(name)')
+        .eq('id', authData.user.id)
+        .single()
+
+      // If the profile exists, is inactive, AND they are not an Admin
+      if (profile && profile.is_user_active === false && profile.role?.name !== 'Admin') {
+        // ⚡ IMMEDIATELY sign them back out so they get no session cookies
+        await supabase.auth.signOut()
+        
+        setError("Your profile is not active, contact admin to activate the profile and then try logging in.")
+        setIsLoading(false)
+        return; // Stop execution, don't let them route
+      }
+
+      // 3. Success! Active user or Admin.
       router.push('/orders') 
       router.refresh()
     }

@@ -126,6 +126,38 @@ const isSuperAdmin = profile?.roles?.name === 'Super Admin';
   const { hasPermission } = useAuth();
   const { canViewDashboard, isCategoryAllowed } = usePermissions();
 
+  // ⚡ NEW: Real-time active status checker
+  useEffect(() => {
+    const verifyActiveSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.replace('/login')
+        return
+      }
+
+      // Check if admin has revoked access while they were logged in
+      const { data: currentProfile } = await supabase
+        .from('profiles')
+        .select('is_user_active, roles(name)')
+        .eq('id', session.user.id)
+        .single()
+
+      if (currentProfile && currentProfile.is_user_active === false) {
+        // ⚡ FIX: Safely extract the role name whether Supabase returns an array or an object
+        const roleData = currentProfile.roles as any;
+        const roleName = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+
+        // If they are deactivated and NOT an admin, kick them out
+        if (roleName !== 'Admin') {
+          await supabase.auth.signOut()
+          router.replace('/login') // Kicks them out immediately
+        }
+      }
+    }
+
+    verifyActiveSession()
+  }, [pathname, router, supabase])
+
   // Redirect employees away from /dashboard — their landing page is /cash-memo/
   useEffect(() => {
     if (pathname === "/dashboard" && !canViewDashboard) {
