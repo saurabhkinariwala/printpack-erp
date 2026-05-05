@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleLogin = async (e: React.FormEvent) => {
+const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setError(null)
@@ -55,8 +55,12 @@ export default function LoginPage() {
         .eq('id', authData.user.id)
         .single()
 
+      // ⚡ FIX: Safely unwrap the role name so TypeScript doesn't panic
+      const roleData = profile?.role as any;
+      const roleName = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+
       // If the profile exists, is inactive, AND they are not an Admin
-      if (profile && profile.is_user_active === false && profile.role?.name !== 'Admin') {
+      if (profile && profile.is_user_active === false && roleName !== 'Admin') {
         // ⚡ IMMEDIATELY sign them back out so they get no session cookies
         await supabase.auth.signOut()
         
