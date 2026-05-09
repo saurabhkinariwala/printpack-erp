@@ -7,30 +7,30 @@ import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users, User, Power, Ed
 
 const PERMISSION_KEYS = {
   // View
-  //view_dashboard: "View Dashboard",
-  //view_orders: "View Orders",
-  //view_payments: "View Payments",
-  //view_dispatch: "View Dispatch",
+  view_dashboard: "View Dashboard",
+  view_orders: "View Orders",
+  view_payments: "View Payments",
+  view_dispatch: "View Dispatch",
   // Edit
-  //edit_orders: "Edit Orders",
+  edit_orders: "Edit Orders",
   edit_inwards: "Edit Inwards Register",
-  //edit_products: "Edit Products",
-  //edit_cash_memos: "Edit Cash Memos",
-  //edit_dispatch: "Edit Dispatch",
+  edit_products: "Edit Products",
+  edit_cash_memos: "Edit Cash Memos",
+  edit_dispatch: "Edit Dispatch",
   // Delete
-  //delete_orders: "Delete Orders",
-  //delete_inwards: "Delete Inwards Register",
-  //delete_cash_memos: "Delete Cash Memos",
-  //delete_products: "Delete Products",
+  delete_orders: "Delete Orders",
+  delete_inwards: "Delete Inwards Register",
+  delete_cash_memos: "Delete Cash Memos",
+  delete_products: "Delete Products",
   // Access
-  //access_bakery: "Access Bakery Products",
+  access_bakery: "Access Bakery Products",
   access_giftbox: "Access Gift Box Products",
   
-  //add_stock: "Add Stock",
-  //remove_stock: "Remove Stock",
+  add_stock: "Add Stock",
+  remove_stock: "Remove Stock",
   
-  //manage_users: "Manage Users",
-  //manage_roles: "Manage Roles",
+  manage_users: "Manage Users",
+  manage_roles: "Manage Roles",
 } as const
 
 
