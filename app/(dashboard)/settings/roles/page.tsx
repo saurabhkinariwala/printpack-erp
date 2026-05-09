@@ -3,20 +3,37 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/context/AuthContext"
-import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users, User, Power } from "lucide-react"
+import { Shield, Plus, Save, Loader2, Key, AlertTriangle, Users, User, Power, Edit } from "lucide-react"
 
 const PERMISSION_KEYS = {
-  view_dashboard: "View Dashboard",
-  access_bakery: "Access Bakery Products",
+  // View
+  //view_dashboard: "View Dashboard",
+  //view_orders: "View Orders",
+  //view_payments: "View Payments",
+  //view_dispatch: "View Dispatch",
+  // Edit
+  //edit_orders: "Edit Orders",
+  edit_inwards: "Edit Inwards Register",
+  //edit_products: "Edit Products",
+  //edit_cash_memos: "Edit Cash Memos",
+  //edit_dispatch: "Edit Dispatch",
+  // Delete
+  //delete_orders: "Delete Orders",
+  //delete_inwards: "Delete Inwards Register",
+  //delete_cash_memos: "Delete Cash Memos",
+  //delete_products: "Delete Products",
+  // Access
+  //access_bakery: "Access Bakery Products",
   access_giftbox: "Access Gift Box Products",
-  edit_products: "Edit Products",
-  edit_orders: "Edit Orders",
-  delete_orders: "Delete Orders",
-  edit_cash_memos: "Edit Cash Memos",
-  delete_cash_memos: "Delete Cash Memos",
-  edit_dispatch: "Edit Dispatch",
-  manage_roles: "Manage Roles",
+  
+  //add_stock: "Add Stock",
+  //remove_stock: "Remove Stock",
+  
+  //manage_users: "Manage Users",
+  //manage_roles: "Manage Roles",
 } as const
+
+
 
 export default function RolesAndUsersPage() {
   const supabase = createClient()

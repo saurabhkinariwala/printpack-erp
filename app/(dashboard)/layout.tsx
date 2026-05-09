@@ -201,7 +201,7 @@ const isSuperAdmin = profile?.roles?.name === 'Super Admin';
     ...(!isPackArt ? [{ name: "Customers",        href: "/customers", icon: Users           }] : []),
     { name: "Inventory",        href: "/inventory", icon: Package         },
     ...(!isPackArt ? [{ name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  }] : []),
-    ...(isPackArt ? [{ name: "Inwards Register", href: "/inwards",   icon: FileText        }] : []),
+    { name: "Inwards Register", href: "/inwards",   icon: FileText        },
     { name: "Product Gallery",  href: "/gallery",   icon: ImageIcon       },
     // Gate the Roles page!
     ...(canManageRoles  ? [{ name: "Roles", href: "/settings/roles", icon: Settings }] : []),

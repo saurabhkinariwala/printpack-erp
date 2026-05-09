@@ -179,10 +179,6 @@ export default function InwardsPage() {
     setIsSubmitting(false)
   }
 
-  if (!isPackArt && !isLoading) {
-    return <div className="p-20 text-center text-slate-500 font-bold">This page is restricted to Pack Art.</div>
-  }
-
   if (isLoading) return <div className="p-20 flex justify-center"><Loader2 className="w-8 h-8 animate-spin text-blue-500"/></div>
 
   return (

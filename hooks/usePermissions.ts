@@ -29,6 +29,8 @@ const KEYS = {
   editCashMemos: "edit_cash_memos",  // Can edit existing cash memos
   deleteCashMemos: "delete_cash_memos", // Can delete cash memos
   editDispatch:  "edit_dispatch",    // Can create/manage dispatch notes
+  addStock:      "add_stock",        // Can add/manufacture stock in inventory
+  removeStock:   "remove_stock",     // Can remove/adjust stock in inventory
   manageRoles:   "manage_roles",     // Super admin — can open the Roles settings page
 } as const
 
@@ -55,6 +57,8 @@ export function usePermissions() {
   const canEditCashMemos = hasPermission(KEYS.editCashMemos)
   const canDeleteCashMemos = hasPermission(KEYS.deleteCashMemos)
   const canEditDispatch  = hasPermission(KEYS.editDispatch)
+  const canAddStock      = hasPermission(KEYS.addStock)
+  const canRemoveStock   = hasPermission(KEYS.removeStock)
   const canManageRoles   = hasPermission(KEYS.manageRoles)
 
   // ── Category filter — used by every page that loads items ────────────────
@@ -80,6 +84,8 @@ export function usePermissions() {
     canEditCashMemos,
     canDeleteCashMemos,
     canEditDispatch,
+    canAddStock,
+    canRemoveStock,
     canManageRoles,
     isCategoryAllowed,
   }
