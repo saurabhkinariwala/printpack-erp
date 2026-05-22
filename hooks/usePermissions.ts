@@ -89,6 +89,7 @@ export function usePermissions() {
     canAddStock,
     canRemoveStock,
     canManageRoles,
+    canAddInwardReceipt,
     isCategoryAllowed,
   }
 }

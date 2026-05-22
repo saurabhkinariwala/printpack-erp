@@ -28,6 +28,8 @@ const PERMISSION_KEYS = {
   
   add_stock: "Add Stock",
   remove_stock: "Remove Stock",
+
+  add_inward_receipt: "Add Inward Receipt", // NEW PERMISSION KEY for GRN creation
   
   manage_users: "Manage Users",
   manage_roles: "Manage Roles",

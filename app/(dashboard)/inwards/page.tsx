@@ -190,7 +190,7 @@ export default function InwardsPage() {
           <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><FileText className="w-6 h-6 text-blue-600"/> Inward Slips (GRN)</h2>
           <p className="text-sm text-slate-500 mt-1">Record and manage incoming stock from vendors.</p>
         </div>
-         {hasPermission('canAddInwardReceipt') && (
+         {hasPermission('add_inward_receipt') && (
           <button onClick={openNewModal} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow font-bold flex items-center gap-2 transition-colors">
             <Plus className="w-4 h-4" /> New Inward Slip
           </button>
