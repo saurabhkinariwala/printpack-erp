@@ -32,6 +32,7 @@ const KEYS = {
   addStock:      "add_stock",        // Can add/manufacture stock in inventory
   removeStock:   "remove_stock",     // Can remove/adjust stock in inventory
   manageRoles:   "manage_roles",     // Super admin — can open the Roles settings page
+  addInwardReceipt: "add_inward_receipt", // Can create new inward receipts
 } as const
 
 // ── Category name → KEYS entry (drives isCategoryAllowed) ───────────────────
@@ -60,6 +61,7 @@ export function usePermissions() {
   const canAddStock      = hasPermission(KEYS.addStock)
   const canRemoveStock   = hasPermission(KEYS.removeStock)
   const canManageRoles   = hasPermission(KEYS.manageRoles)
+  const canAddInwardReceipt = hasPermission(KEYS.addInwardReceipt) // reuse dispatch permission for GRN creation
 
   // ── Category filter — used by every page that loads items ────────────────
   const categoryPermCheck: Record<string, boolean> = {

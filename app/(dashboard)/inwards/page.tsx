@@ -15,7 +15,7 @@ export default function InwardsPage() {
   
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
+  const isPAERP = process.env.NEXT_PUBLIC_COMPANY_NAME === "PAERP"
 
   // ── Form States ──
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -190,9 +190,11 @@ export default function InwardsPage() {
           <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><FileText className="w-6 h-6 text-blue-600"/> Inward Slips (GRN)</h2>
           <p className="text-sm text-slate-500 mt-1">Record and manage incoming stock from vendors.</p>
         </div>
-        <button onClick={openNewModal} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow font-bold flex items-center gap-2 transition-colors">
-          <Plus className="w-4 h-4" /> New Inward Slip
-        </button>
+         {hasPermission('canAddInwardReceipt') && (
+          <button onClick={openNewModal} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow font-bold flex items-center gap-2 transition-colors">
+            <Plus className="w-4 h-4" /> New Inward Slip
+          </button>
+        )}
       </div>
 
       {/* ── Powerful Filters ── */}

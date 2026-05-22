@@ -116,7 +116,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 const supabase = createClient();
-const isPackArt = process.env.NEXT_PUBLIC_COMPANY_NAME === "PackArt ERP"
+const isPAERP = process.env.NEXT_PUBLIC_COMPANY_NAME === "PAERP"
 
 const { profile } = useAuth(); // Grab the profile
 
@@ -198,9 +198,9 @@ const isSuperAdmin = profile?.roles?.name === 'Super Admin';
     ...(canViewOrders   ? [{ name: "Orders",           href: "/orders",    icon: ShoppingCart }] : []),
     ...(canViewDispatch ? [{ name: "Dispatch Register",href: "/dispatch",  icon: Truck }] : []),
     ...(canViewPayments ? [{ name: "Payments",         href: "/payments",  icon: CreditCard      }] : []),
-    ...(!isPackArt ? [{ name: "Customers",        href: "/customers", icon: Users           }] : []),
+    ...(!isPAERP ? [{ name: "Customers",        href: "/customers", icon: Users           }] : []),
     { name: "Inventory",        href: "/inventory", icon: Package         },
-    ...(!isPackArt ? [{ name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  }] : []),
+    ...(!isPAERP ? [{ name: "Stock Transfers",  href: "/transfers", icon: ArrowRightLeft  }] : []),
     { name: "Inwards Register", href: "/inwards",   icon: FileText        },
     { name: "Product Gallery",  href: "/gallery",   icon: ImageIcon       },
     // Gate the Roles page!
