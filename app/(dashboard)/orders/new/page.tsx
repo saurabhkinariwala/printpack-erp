@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { Plus, Trash2, Save, User, MapPin, Receipt, Truck, CreditCard, Search, Image as ImageIcon, X, Layers, Minus, Calendar, Hash, Star } from "lucide-react"
+import { Plus, Trash2, Save, User, MapPin, Receipt, Truck, CreditCard, Search, Image as ImageIcon, X, Layers, Minus, Calendar, Hash, Star, Filter, ArrowDownAZ, ArrowUpZA } from "lucide-react"
 import { usePermissions } from "@/hooks/usePermissions"
 
 const INDIAN_STATES = [
@@ -11,6 +11,11 @@ const INDIAN_STATES = [
   "Gujarat", "Rajasthan", "Madhya Pradesh", "Delhi", "Uttar Pradesh", "West Bengal",
   "Bihar", "Punjab", "Haryana", "Odisha", "Assam", "Goa", "Other"
 ];
+
+type Taxonomy = {
+  id: string; name: string;
+  sub_categories: { id: string; name: string; sub_sub_categories: { id: string; name: string }[] }[];
+};
 
 export default function NewOrderPage() {
   const router = useRouter()
@@ -39,6 +44,15 @@ export default function NewOrderPage() {
   const [pendingQtys, setPendingQtys] = useState<Record<string, number>>({})
   const [catalogSearch, setCatalogSearch] = useState("")
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false)
+
+  // Catalog Filter State
+  const [taxonomy, setTaxonomy] = useState<Taxonomy[]>([])
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const [sortOrder, setSortOrder] = useState<"A-Z" | "Z-A">("A-Z")
+  const [selectedCats, setSelectedCats] = useState<string[]>([])
+  const [selectedSubCats, setSelectedSubCats] = useState<string[]>([])
+  const [selectedSubSubCats, setSelectedSubSubCats] = useState<string[]>([])
+  const [appliedFilters, setAppliedFilters] = useState({ cats: [] as string[], subs: [] as string[], subSubs: [] as string[] })
 
   // VIP/FAVORITE CUSTOMER AUTOCOMPLETE
   useEffect(() => {
@@ -72,12 +86,19 @@ export default function NewOrderPage() {
     setIsCatalogOpen(true);
     setIsLoadingCatalog(true);
 
-    const { data: itemsData } = await supabase.from('items').select(`
-      id, name, sku, price, gst_rate, image_path, pack_size,
-      sub_categories(name, categories(name)),
-      sub_sub_categories(name),
-      stock(quantity, locations(name))
-    `);
+    const [itemsRes, taxRes] = await Promise.all([
+      supabase.from('items').select(`
+        id, name, sku, price, gst_rate, image_path, pack_size,
+        sub_categories(id, name, categories(id, name)),
+        sub_sub_categories(id, name),
+        stock(quantity, locations(name))
+      `),
+      supabase.from('categories').select(`
+        id, name, sub_categories ( id, name, sub_sub_categories ( id, name ) )
+      `).order('name')
+    ]);
+
+    if (taxRes.data) setTaxonomy(taxRes.data as unknown as Taxonomy[]);
 
     const { data: orderData } = await supabase
       .from('order_items')
@@ -94,8 +115,8 @@ export default function NewOrderPage() {
     }
     setPendingQtys(pendingMap);
 
-    if (itemsData) {
-      const permitted = itemsData.filter((item: any) =>
+    if (itemsRes.data) {
+      const permitted = itemsRes.data.filter((item: any) =>
         isCategoryAllowed(item.sub_categories?.categories?.name)
       );
       setCatalogItems(permitted);
@@ -104,15 +125,56 @@ export default function NewOrderPage() {
     setIsLoadingCatalog(false);
   }
 
-  // SMART MULTI-SUBSTRING SEARCH LOGIC
+  const handleApplyFilters = () => {
+    setAppliedFilters({ cats: selectedCats, subs: selectedSubCats, subSubs: selectedSubSubCats });
+    setIsFilterOpen(false);
+  };
+
+  const handleClearFilters = () => {
+    setSelectedCats([]); setSelectedSubCats([]); setSelectedSubSubCats([]);
+    setAppliedFilters({ cats: [], subs: [], subSubs: [] });
+    setSortOrder("A-Z"); setIsFilterOpen(false);
+  };
+
+  const availableSubCats = taxonomy
+    .filter(c => appliedFilters.cats.length === 0 || appliedFilters.cats.includes(c.id))
+    .flatMap(c => c.sub_categories || []);
+  const availableSubSubCats = availableSubCats
+    .filter(sc => appliedFilters.subs.length === 0 || appliedFilters.subs.includes(sc.id))
+    .flatMap(sc => sc.sub_sub_categories || []);
+
+  // Panels for filter — use staging state (selectedCats etc)
+  const panelSubCats = taxonomy
+    .filter(c => selectedCats.length === 0 || selectedCats.includes(c.id))
+    .flatMap(c => c.sub_categories || []);
+  const panelSubSubCats = panelSubCats
+    .filter(sc => selectedSubCats.length === 0 || selectedSubCats.includes(sc.id))
+    .flatMap(sc => sc.sub_sub_categories || []);
+
+  // SMART MULTI-SUBSTRING SEARCH LOGIC with category filters
   const filteredCatalog = catalogItems
     .filter(item => {
       const searchableText = `${item.sub_categories?.name || ''} ${item.sub_sub_categories?.name || ''} ${item.name || ''} ${item.sku || ''}`.toLowerCase();
       const searchTerms = catalogSearch.toLowerCase().trim().split(/\s+/);
-      // Ensures EVERY word typed by the user exists somewhere in the product string
-      return searchTerms.every(term => searchableText.includes(term));
+      const matchesSearch = searchTerms.every(term => searchableText.includes(term));
+
+      const catId = item.sub_categories?.categories?.id;
+      const subCatId = item.sub_categories?.id;
+      const subSubCatId = item.sub_sub_categories?.id;
+
+      const matchesCat = appliedFilters.cats.length === 0 || (catId && appliedFilters.cats.includes(catId));
+      const matchesSub = appliedFilters.subs.length === 0 || (subCatId && appliedFilters.subs.includes(subCatId));
+      const matchesSubSub = appliedFilters.subSubs.length === 0 || (subSubCatId && appliedFilters.subSubs.includes(subSubCatId));
+
+      return matchesSearch && matchesCat && matchesSub && matchesSubSub;
     })
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    .sort((a, b) =>
+      sortOrder === "A-Z"
+        ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        : b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+
+  const activeFilterCount = appliedFilters.cats.length + appliedFilters.subs.length + appliedFilters.subSubs.length;
 
   const handleCatalogAdd = (item: any) => {
     const packSize = item.pack_size || 10;
@@ -426,53 +488,168 @@ export default function NewOrderPage() {
 
       {/* CATALOG MODAL */}
       {isCatalogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-8">
-          <div className="bg-slate-50 w-full max-w-7xl h-full rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="bg-white p-5 border-b border-slate-200 flex justify-between items-center shrink-0">
-              <div><h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Search className="w-6 h-6 text-blue-600" /> Master Catalog Browser</h2></div>
-              <button onClick={() => setIsCatalogOpen(false)} className="p-2 bg-slate-100 hover:bg-red-100 text-slate-500 hover:text-red-600 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-stretch justify-end backdrop-blur-sm">
+          <div className="w-full max-w-3xl bg-white flex flex-col h-full shadow-2xl">
+
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shrink-0">
+              <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><Search className="w-5 h-5 text-blue-600" /> Master Catalog Browser</h3>
+              <button onClick={() => setIsCatalogOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-            <div className="bg-white p-4 border-b border-slate-200 shrink-0"><input type="text" value={catalogSearch} onChange={(e) => setCatalogSearch(e.target.value)} placeholder="Type to search e.g. 'Dry Fruit 400gm d-1'..." className="w-full p-3 border-2 border-blue-100 rounded-xl outline-none focus:border-blue-500 text-lg font-medium shadow-sm" autoFocus /></div>
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
-              {isLoadingCatalog ? (<div className="flex h-full items-center justify-center text-slate-400 font-bold text-lg">Loading Master Catalog...</div>) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
-                  {filteredCatalog.map(item => {
-                    let totalAct = 0; let remainingPending = pendingQtys[item.id] || 0; let totalAvl = 0;
-                    item.stock?.forEach((s: any) => { totalAct += s.quantity; const locDeduction = Math.min(s.quantity, remainingPending); remainingPending -= locDeduction; totalAvl += (s.quantity - locDeduction); });
-                    const cartItem = orderItems.find(i => i.item_id === item.id);
-                    const packSize = item.pack_size || 10;
-                    return (
-                      <div key={item.id} className={`bg-white border-2 rounded-xl overflow-hidden flex flex-col transition-all ${cartItem ? 'border-blue-500 shadow-md ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`}>
-                        <div className="h-40 w-full bg-slate-100 relative">
-                          {item.image_path ? ( /* eslint-disable-next-line @next/next/no-img-element */ <img src={item.image_path} alt={item.name} className="h-full w-full object-cover" />) : <div className="h-full w-full flex items-center justify-center"><ImageIcon className="w-10 h-10 text-slate-300" /></div>}
-                          <div className="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded">Pack of {packSize}</div>
-                        </div>
-                        <div className="p-4 flex-1 flex flex-col">
-                          <p className="text-[10px] font-bold text-blue-600 uppercase mb-1 leading-tight">{item.sub_categories?.name || 'Uncategorized'} › {item.sub_sub_categories?.name || 'Standard'}</p>
-                          <div className="flex justify-between items-start gap-2 mb-1"><h4 className="font-bold text-slate-800 leading-tight">{item.name}</h4><span className="font-black text-slate-800">₹{item.price}</span></div>
-                          <p className="text-xs text-slate-400 font-mono mb-3">{item.sku}</p>
-                          <div className="flex gap-3 text-xs font-mono mt-auto"><span className="text-slate-500">ACT:{totalAct}</span><span className={`font-bold ${totalAvl > 0 ? 'text-green-600' : 'text-red-500'}`}>AVL:{totalAvl}</span></div>
-                        </div>
-                        <div className="p-3 bg-slate-50 border-t border-slate-100">
-                          {cartItem ? (
-                            <div className="flex items-center justify-between bg-blue-50 rounded-lg p-1 border border-blue-200">
-                              <button onClick={() => handleCatalogRemove(item)} className="p-2 bg-white rounded shadow-sm text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"><Minus className="w-4 h-4" /></button>
-                              <div className="flex flex-col items-center"><span className="font-black text-blue-800">{cartItem.qty} <span className="text-xs font-semibold">Qty</span></span></div>
-                              <button onClick={() => handleCatalogAdd(item)} className="p-2 bg-white rounded shadow-sm text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"><Plus className="w-4 h-4" /></button>
-                            </div>
-                          ) : (
-                            <button onClick={() => handleCatalogAdd(item)} className="w-full py-2 bg-white border border-slate-300 hover:border-blue-500 hover:bg-blue-50 text-slate-700 font-bold rounded-lg transition-colors flex items-center justify-center gap-2"><Plus className="w-4 h-4" /> Add to Order</button>
-                          )}
-                        </div>
+
+            {/* Search + Filter Bar */}
+            <div className="px-6 py-3 border-b border-slate-100 bg-slate-50 shrink-0 flex gap-3 items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name, SKU, category..."
+                  value={catalogSearch}
+                  onChange={e => setCatalogSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={() => setIsFilterOpen(true)}
+                className="relative flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
+              >
+                <Filter className="h-4 w-4" /> Filters
+                {activeFilterCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-blue-600 text-white text-[10px] font-black rounded-full flex items-center justify-center">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Results Count */}
+            <div className="px-6 py-2 text-xs text-slate-500 font-medium shrink-0 bg-white border-b border-slate-100">
+              Showing <span className="font-bold text-slate-700">{filteredCatalog.length}</span> of {catalogItems.length} items
+              {activeFilterCount > 0 && (
+                <button onClick={handleClearFilters} className="ml-3 text-blue-600 hover:underline font-semibold">Clear filters</button>
+              )}
+            </div>
+
+            {/* Catalog Item List */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+              {isLoadingCatalog ? (
+                <div className="p-12 text-center text-slate-500">Loading catalog...</div>
+              ) : filteredCatalog.length === 0 ? (
+                <div className="p-12 text-center text-slate-500">No items match your search or filters.</div>
+              ) : (
+                filteredCatalog.map((item) => {
+                  const inOrder = orderItems.find(i => i.item_id === item.id);
+                  const pending = pendingQtys[item.id] || 0;
+                  const totalStock = item.stock?.reduce((s: number, st: any) => s + st.quantity, 0) || 0;
+                  const available = Math.max(0, totalStock - pending);
+                  return (
+                    <div key={item.id} className={`flex items-center gap-4 px-5 py-3.5 hover:bg-slate-50 transition-colors ${inOrder ? 'bg-blue-50/50' : ''}`}>
+                      <div className="h-12 w-12 bg-slate-100 rounded-lg border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                        {item.image_path ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={item.image_path} alt={item.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <ImageIcon className="w-6 h-6 text-slate-300" />
+                        )}
                       </div>
-                    )
-                  })}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-slate-800 text-sm truncate">{item.name}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{item.sku} &bull; {item.sub_categories?.name} › {item.sub_sub_categories?.name || 'Standard'}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Stock: <span className={available > 0 ? 'text-green-600 font-bold' : 'text-red-500 font-bold'}>{available} avail</span>
+                          {pending > 0 && <span className="text-orange-500 ml-1">({pending} pending)</span>}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-black text-blue-600 text-sm">₹{item.price.toLocaleString()}</p>
+                        <p className="text-[10px] text-slate-400">Pack of {item.pack_size || 10}</p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {inOrder ? (
+                          <>
+                            <button onClick={() => handleCatalogRemove(item)} className="w-8 h-8 flex items-center justify-center bg-slate-200 hover:bg-red-100 hover:text-red-600 rounded-lg transition-colors"><Minus className="w-4 h-4" /></button>
+                            <span className="w-10 text-center font-black text-blue-700 text-sm">{inOrder.qty}</span>
+                            <button onClick={() => handleCatalogAdd(item)} className="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"><Plus className="w-4 h-4" /></button>
+                          </>
+                        ) : (
+                          <button onClick={() => handleCatalogAdd(item)} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors">+ Add</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+              <p className="text-sm font-bold text-slate-700">{orderItems.length} item type(s) selected &bull; {orderItems.reduce((s, i) => s + i.qty, 0)} total units</p>
+              <button onClick={() => setIsCatalogOpen(false)} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold text-sm">Done</button>
+            </div>
+          </div>
+
+          {/* FILTER PANEL — slides in over the catalog modal */}
+          {isFilterOpen && <div className="fixed inset-0 bg-slate-900/30 z-10" onClick={() => setIsFilterOpen(false)} />}
+          <div className={`fixed inset-y-0 right-0 z-20 w-full max-w-xs bg-white shadow-2xl transform transition-transform duration-300 flex flex-col ${isFilterOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="text-lg font-bold flex items-center gap-2"><Filter className="h-5 w-5 text-blue-600" /> Filter & Sort</h2>
+              <button onClick={() => setIsFilterOpen(false)}><X className="h-5 w-5 text-slate-400 hover:text-slate-700" /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              <div>
+                <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Sort Alphabetically</h3>
+                <div className="flex gap-2">
+                  <button onClick={() => setSortOrder("A-Z")} className={`flex-1 py-2 flex justify-center items-center gap-2 border rounded-md text-sm font-semibold transition-colors ${sortOrder === "A-Z" ? "bg-slate-100 border-slate-300 text-slate-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}><ArrowDownAZ className="w-4 h-4" /> A to Z</button>
+                  <button onClick={() => setSortOrder("Z-A")} className={`flex-1 py-2 flex justify-center items-center gap-2 border rounded-md text-sm font-semibold transition-colors ${sortOrder === "Z-A" ? "bg-slate-100 border-slate-300 text-slate-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}><ArrowUpZA className="w-4 h-4" /> Z to A</button>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Main Categories</h3>
+                <div className="space-y-3">
+                  {taxonomy.map(c => (
+                    <label key={c.id} className="flex items-center gap-3 cursor-pointer group">
+                      <input type="checkbox" checked={selectedCats.includes(c.id)} onChange={(e) => setSelectedCats(e.target.checked ? [...selectedCats, c.id] : selectedCats.filter(id => id !== c.id))} className="h-4 w-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                      <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {panelSubCats.length > 0 && (
+                <div>
+                  <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Sub-Categories</h3>
+                  <div className="space-y-3 border-l-2 border-slate-100 pl-3">
+                    {panelSubCats.map(sc => (
+                      <label key={sc.id} className="flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" checked={selectedSubCats.includes(sc.id)} onChange={(e) => setSelectedSubCats(e.target.checked ? [...selectedSubCats, sc.id] : selectedSubCats.filter(id => id !== sc.id))} className="h-4 w-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                        <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{sc.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {panelSubSubCats.length > 0 && (
+                <div>
+                  <h3 className="font-bold text-xs uppercase text-slate-500 mb-3 tracking-wider">Variants / Sizes</h3>
+                  <div className="space-y-3 border-l-2 border-slate-100 pl-3 ml-3">
+                    {panelSubSubCats.map(ssc => (
+                      <label key={ssc.id} className="flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" checked={selectedSubSubCats.includes(ssc.id)} onChange={(e) => setSelectedSubSubCats(e.target.checked ? [...selectedSubSubCats, ssc.id] : selectedSubSubCats.filter(id => id !== ssc.id))} className="h-4 w-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500" />
+                        <span className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{ssc.name}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
-            <div className="bg-white p-4 border-t border-slate-200 flex justify-between items-center shrink-0">
-              <span className="text-sm font-bold text-slate-500">{filteredCatalog.length} Products Found</span>
-              <button onClick={() => setIsCatalogOpen(false)} className="bg-slate-800 text-white px-8 py-3 rounded-xl font-bold shadow hover:bg-slate-900">Done Selecting Items</button>
+
+            <div className="p-5 bg-slate-50 flex gap-3 border-t border-slate-200">
+              <button onClick={handleClearFilters} className="flex-1 py-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors">Clear All</button>
+              <button onClick={handleApplyFilters} className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm hover:bg-blue-700 transition-colors">Apply Filters</button>
             </div>
           </div>
         </div>

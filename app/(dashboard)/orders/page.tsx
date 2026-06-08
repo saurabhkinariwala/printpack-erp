@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
-import { Search, Plus, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, MapPin, Phone, Edit2, Trash2 } from "lucide-react"
+import { Search, Plus, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, MapPin, Phone, Edit2, Trash2, User } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
 type Order = {
@@ -12,6 +12,7 @@ type Order = {
   payments: { amount: number }[];
   order_items?: { quantity_ordered: number }[];
   dispatch_notes?: { dispatch_items: { quantity_dispatched: number }[] }[];
+  created_by_user?: { full_name: string } | null;
 };
 
 type SortConfig = { key: 'order_number' | 'created_at' | 'customer_name' | 'total_amount' | 'status' | 'payment' | 'delivery'; direction: 'asc' | 'desc' };
@@ -37,7 +38,8 @@ export default function OrdersListPage() {
       customers (name, mobile, city, state),
       payments (amount),
       order_items ( quantity_ordered ),
-      dispatch_notes ( dispatch_items ( quantity_dispatched ) )
+      dispatch_notes ( dispatch_items ( quantity_dispatched ) ),
+      created_by_user:profiles!orders_created_by_fkey (full_name)
     `).order('order_number', { ascending: false });
 
     if (data) setOrders(data as unknown as Order[]);
@@ -212,7 +214,28 @@ export default function OrdersListPage() {
                 filteredOrders.map((order) => (
                   <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4 font-black text-slate-800">{order.order_number}</td>
-                    <td className="px-6 py-4 text-slate-600 font-medium">{new Date(order.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td className="px-6 py-4 text-slate-600 font-medium">
+                      {/* Date cell with "Created by" tooltip on hover */}
+                      <div className="relative group/date inline-block">
+                        <span className="cursor-default">
+                          {new Date(order.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </span>
+                        {/* Tooltip */}
+                        <div className="absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-20 bg-slate-800 text-white text-xs rounded-lg px-3 py-2 opacity-0 invisible group-hover/date:opacity-100 group-hover/date:visible transition-all duration-150 pointer-events-none whitespace-nowrap shadow-xl border border-slate-700">
+                          <p className="font-bold text-[10px] text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                            <User className="w-3 h-3" /> Created by
+                          </p>
+                          <p className="font-semibold text-white">
+                            {order.created_by_user?.full_name || 'Unknown User'}
+                          </p>
+                          <p className="text-slate-400 text-[10px] mt-0.5">
+                            {new Date(order.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                          {/* Tooltip arrow */}
+                          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-800 rotate-45 border-r border-b border-slate-700"></div>
+                        </div>
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <div className="font-bold text-slate-800 text-sm">{order.customers?.name || 'Unknown'}</div>
                       <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
